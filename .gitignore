@@ -1,0 +1,6 @@
+*.container
+*.pod
+*.network
+*.volume
+localquad
+
