@@ -30,6 +30,8 @@ var (
 	}
 	// Regex to extract images from YAML (KubernetesYAML=) - Simple and brittle
 	yamlImageRegex = regexp.MustCompile(`image:\s*["']?([^"'\s]+)["']?`)
+
+	config map[string]string
 )
 
 // Quadlet represents a parsed Quadlet file and its relationships.
@@ -52,11 +54,34 @@ var (
 	gVerbose             = false
 	gInstallSubdirectory = true // Default to installing quadlets in a subdirectory to keep them organized
 	gInstallLinks        = true // Default to using symbolic links for installation to avoid file duplication and allow live updates
+	gReloadSystemd       = true // Default to reloading systemd after installation to apply changes immediately
 )
 
 func main() {
-	// 1. Define and parse flags
-	rootfulOpt := flag.Bool("rootful", false, "Execute podman commands rootful (requires sudo/root access)")
+
+	// Read config
+	config, err := getConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading config: %v\n", err)
+		os.Exit(1)
+	}
+	if val, ok := config["install_subdirectory"]; ok && (val == "false" || val == "0") {
+		gInstallSubdirectory = false
+	}
+	if val, ok := config["install_links"]; ok && (val == "false" || val == "0") {
+		gInstallLinks = false
+	}
+	if val, ok := config["reload-systemd"]; ok && (val == "false" || val == "0") {
+		gReloadSystemd = false
+	}
+
+	// Determine if running as root
+	if os.Geteuid() == 0 {
+		gRootful = true
+	}
+
+	// Handle flags
+	//rootfulOpt := flag.Bool("rootful", false, "Execute podman commands rootful (requires sudo/root access)")
 	dryRunOpt := flag.Bool("dry-run", false, "Print podman commands and warnings without executing")
 	verboseOpt := flag.Bool("verbose", false, "Print detailed information about command execution and warnings")
 
@@ -69,7 +94,7 @@ func main() {
 	}
 
 	subcommand := strings.ToLower(flag.Arg(0))
-	gRootful = *rootfulOpt
+	//gRootful = *rootfulOpt
 	gDryRun = *dryRunOpt
 	gVerbose = *verboseOpt
 
@@ -155,6 +180,41 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  uninstall : Remove files in systemd dirs\n")
 	fmt.Fprintf(os.Stderr, "\nWrapper commands (filtered to defined resources):\n")
 	fmt.Fprintf(os.Stderr, "  ps, stats, images\n")
+}
+
+// --- UTILITY FUNCTIONS ---
+
+func getConfig() (map[string]string, error) {
+
+	config = make(map[string]string)
+
+	path := os.Getenv("XDG_CONFIG_HOME")
+	if path == "" {
+		path = os.Getenv("HOME") + "/.config"
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			config[key] = val
+		}
+	}
+	return config, nil
 }
 
 // --- CORE LOGIC HANDLERS ---
@@ -344,6 +404,10 @@ func handleInstall(ordered []*Quadlet, sourceDir string) {
 		targetDir = filepath.Join(os.Getenv("HOME"), ".config/containers/systemd")
 	}
 
+	if gDryRun {
+		fmt.Printf("=> [DRY-RUN] Would install quadlets to: %s\n", targetDir)
+		return
+	}
 	fmt.Printf("=> Installing quadlets to: %s\n", targetDir)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating target directory: %v\n", err)
@@ -434,22 +498,41 @@ func handleInstall(ordered []*Quadlet, sourceDir string) {
 			fmt.Fprintf(os.Stderr, "[INFO] .kube installs use the generic `podman-kube@` service\n")
 			continue
 		}
+		if ext == ".volume" || ext == ".network" {
+			continue
+		}
 		// Convert myapp.container to myapp.service
-		svc := strings.TrimSuffix(q.Filepath, ext) + ".service"
+		name := strings.TrimSuffix(filepath.Base(q.Filepath), ext)
+		if q.Type == ".pod" {
+			name += "-pod"
+		}
+		svc := name + ".service"
 		serviceNames = append(serviceNames, svc)
 	}
 
 	prefix := ""
 	if !gRootful {
-		prefix = "--user "
+		prefix = "--user"
+	}
+
+	reloadCmd := []string{"systemctl", prefix, "daemon-reload"}
+	var startCmd []string
+	if len(serviceNames) > 0 {
+		startCmd = append(startCmd, "systemctl", prefix, "start")
+		startCmd = append(startCmd, serviceNames...)
+	}
+	if gReloadSystemd {
+		fmt.Printf("\n=> Reloading systemd to apply changes: %s\n", strings.Join(reloadCmd, " "))
+		_ = runCommand(reloadCmd)
 	}
 
 	fmt.Println("\n# --- SYSTEMD INSTRUCTIONS ---")
 	fmt.Println("# Quadlets installed. Execute the following commands to enable via systemd:")
-	fmt.Printf("\nsystemctl %sdaemon-reload\n", prefix)
-	if len(serviceNames) > 0 {
-		fmt.Printf("systemctl %senable --now %s\n", prefix, strings.Join(serviceNames, " "))
+	if !gReloadSystemd {
+		fmt.Printf("\n%s\n", strings.Join(reloadCmd, " "))
 	}
+	fmt.Printf("\n%s\n", strings.Join(startCmd, " "))
+
 }
 
 func handleUninstall(ordered []*Quadlet, sourceDir string) {
@@ -483,6 +566,28 @@ func handleUninstall(ordered []*Quadlet, sourceDir string) {
 					if err := os.RemoveAll(dropInDir); err != nil {
 						fmt.Fprintf(os.Stderr, "Failed to remove drop-in dir %s: %v\n", dropInDir, err)
 					}
+				}
+			}
+		}
+
+		//Expressly remove volume and network resources that might be left behind if the user forgets to run 'podman volume rm' or 'podman network rm' for the resources defined in the quadlets, since they won't be automatically removed by systemd and could cause conflicts on re-installation.
+		for _, q := range ordered {
+			if q.Type == ".volume" {
+				fmt.Printf("=> Removing volume %s...\n", q.ID)
+				//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
+				if volName := q.Sections["Volume"]["VolumeName"]; volName != nil {
+					_ = runCommand([]string{"podman", "volume", "rm", "-f", "systemd-" + volName[0]})
+				} else {
+					_ = runCommand([]string{"podman", "volume", "rm", "-f", "systemd-" + q.ID})
+				}
+			}
+			if q.Type == ".network" {
+				fmt.Printf("=> Removing network %s...\n", q.ID)
+				//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
+				if networkName := q.Sections["Network"]["NetworkName"]; networkName != nil {
+					_ = runCommand([]string{"podman", "network", "rm", "-f", "systemd-" + networkName[0]})
+				} else {
+					_ = runCommand([]string{"podman", "network", "rm", "-f", "systemd-" + q.ID})
 				}
 			}
 		}
