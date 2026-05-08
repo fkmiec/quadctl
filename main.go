@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/fkmiec/quadctl/schema"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
@@ -58,7 +60,70 @@ var (
 	gInstallReplace          = false // Default to NOT replacing existing installed quadlets. User can remove first or specifically configure to replace.
 	gUninstallRemoveVolumes  = true  // Default to removing volumes on uninstall since they are often not needed after uninstall and can be left behind if not removed, but can be configured to keep volumes for data persistence.
 	gUninstallRemoveNetworks = true  // Default to removing networks on uninstall since they are often not needed after uninstall and can be left behind if not removed, but can be configured to keep volumes for data persistence.
+	quadletSchemas           = map[string]map[string]SchemaOption{}
 )
+
+func assembleQuadletOptionsMap(options []SchemaOption) map[string]SchemaOption {
+	optionsMap := make(map[string]SchemaOption)
+	for _, option := range options {
+		optionsMap[option.QuadletKey] = option
+	}
+	return optionsMap
+}
+
+func assemblePodmanOptionsMap(options []SchemaOption) map[string]SchemaOption {
+	optionsMap := make(map[string]SchemaOption)
+	for _, option := range options {
+		optionsMap[option.PodmanKey] = option
+	}
+	return optionsMap
+}
+
+func GetQuadletOptionsMap(quadletType string) map[string]SchemaOption {
+	var options []SchemaOption
+	switch quadletType {
+	case "container":
+		options = GetContainerOptions()
+	case "pod":
+		options = GetPodOptions()
+	case "network":
+		options = GetNetworkOptions()
+	case "volume":
+		options = GetVolumeOptions()
+	case "kube":
+		options = GetKubeOptions()
+	default:
+		return nil
+	}
+	if options == nil {
+		return nil
+	}
+	optionsMap := assembleQuadletOptionsMap(options)
+	return optionsMap
+}
+
+func GetPodmanOptionsMap(quadletType string) map[string]SchemaOption {
+	var options []SchemaOption
+	switch quadletType {
+	case "container":
+		options = GetContainerOptions()
+	case "pod":
+		options = GetPodOptions()
+	case "network":
+		options = GetNetworkOptions()
+	case "volume":
+		options = GetVolumeOptions()
+	case "kube":
+		options = GetKubeOptions()
+	default:
+		return nil
+	}
+	if options == nil {
+		return nil
+	}
+	optionsMap := assemblePodmanOptionsMap(options)
+	return optionsMap
+}
 
 func main() {
 
@@ -115,6 +180,14 @@ func main() {
 		}
 		searchDir, _ = filepath.Abs(tmp)
 	}
+
+	//Get the schemas for each supported type
+	quadletSchemas = map[string]map[string]SchemaOption{}
+	quadletSchemas["volume"] = GetQuadletOptionsMap("volume")
+	quadletSchemas["network"] = GetQuadletOptionsMap("network")
+	quadletSchemas["container"] = GetQuadletOptionsMap("container")
+	quadletSchemas["pod"] = GetQuadletOptionsMap("pod")
+	quadletSchemas["kube"] = GetQuadletOptionsMap("kube")
 
 	// 3. Discover, parse and resolve dependencies
 	quadlets, err := discoverAndParseQuadlets(searchDir)
@@ -993,33 +1066,79 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 
 	switch q.Type {
 	case ".volume":
+		//Get the schema for the volume type and use the PodmanTemplateParsed to format the podman option.
+		options, ok := quadletSchemas["volume"]
+		if !ok {
+			warnings = append(warnings, "No volume schema found.")
+			return cmd, warnings
+		}
 		cmd = append(cmd, "podman", "volume", "create")
 		if volSec, ok := q.Sections["Volume"]; ok {
 			cmd = append(cmd, getRawPodmanArgs(volSec)...)
-			for k := range volSec {
-				if k != "PodmanArgs" {
-					warnings = append(warnings, fmt.Sprintf("Ignored [Volume] key: %s", k))
+			for k, vals := range volSec {
+				for _, v := range vals {
+					switch k {
+					case "Type":
+						continue // Type is not a Podman CLI option
+					case "ServiceName":
+						continue // ServiceName is for systemd and does not affect Podman CLI
+					case "VolumeName":
+						cmd = append(cmd, "--name", v) // Not sure this is valid. May need to hold the value and append at the end after processing all options to avoid ordering issues with Podman CLI
+						continue
+					case "PodmanArgs": // Handled above
+						continue
+					default:
+						var buf bytes.Buffer
+						if opt, ok := options[k]; ok {
+							err := opt.PodmanTemplateParsed.Execute(&buf, v)
+							if err != nil {
+								warnings = append(warnings, fmt.Sprintf("Error formatting volume option %s: %v", k, err))
+								continue
+							}
+							formatted := buf.String()
+							cmd = append(cmd, formatted)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("Quadlet volume option not defined: %s", k))
+						}
+					}
 				}
 			}
 		}
 		cmd = append(cmd, q.ID)
 
 	case ".network":
+		//Get the schema for the network type and use the PodmanTemplateParsed to format the podman option.
+		options, ok := quadletSchemas["network"]
+		if !ok {
+			warnings = append(warnings, "No network schema found.")
+			return cmd, warnings
+		}
 		cmd = append(cmd, "podman", "network", "create")
 		if netSec, ok := q.Sections["Network"]; ok {
 			cmd = append(cmd, getRawPodmanArgs(netSec)...)
 			for k, vals := range netSec {
 				for _, v := range vals {
 					switch k {
-					case "Subnet":
-						cmd = append(cmd, "--subnet", v)
-					case "Gateway":
-						cmd = append(cmd, "--gateway", v)
-					case "Label":
-						cmd = append(cmd, "--label", v)
+					case "NetworkName":
+						continue // NetworkName is for systemd and does not affect Podman CLI
+					case "ServiceName":
+						continue // ServiceName is for systemd and does not affect Podman CLI
+					case "NetworkDeleteOnStop":
+						continue // NetworkDeleteOnStop is for systemd and does not affect Podman CLI
 					case "PodmanArgs": // Handled above
 					default:
-						warnings = append(warnings, fmt.Sprintf("Ignored [Network] key: %s", k))
+						var buf bytes.Buffer
+						if opt, ok := options[k]; ok {
+							err := opt.PodmanTemplateParsed.Execute(&buf, v)
+							if err != nil {
+								warnings = append(warnings, fmt.Sprintf("Error formatting network option %s: %v", k, err))
+								continue
+							}
+							formatted := buf.String()
+							cmd = append(cmd, formatted)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("Quadlet network option not defined: %s", k))
+						}
 					}
 				}
 			}
@@ -1027,25 +1146,48 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		cmd = append(cmd, q.ID)
 
 	case ".pod":
+		//Get the schema
+		options, ok := quadletSchemas["pod"]
+		if !ok {
+			warnings = append(warnings, "No pod schema found.")
+			return cmd, warnings
+		}
+
 		cmd = append(cmd, "podman", "pod", "create", "--name", q.ID)
 		if podSec, ok := q.Sections["Pod"]; ok {
 			cmd = append(cmd, getRawPodmanArgs(podSec)...)
 			for k, vals := range podSec {
 				for _, v := range vals {
 					switch k {
-					case "PublishPort":
-						cmd = append(cmd, "-p", v)
-					case "Network":
-						cmd = append(cmd, "--network", strings.TrimSuffix(v, ".network"))
+					case "ServiceName":
+						continue // ServiceName is for systemd and does not affect Podman CLI
 					case "PodmanArgs": // Handled above
 					default:
-						warnings = append(warnings, fmt.Sprintf("Ignored [Pod] key: %s", k))
+						var buf bytes.Buffer
+						if opt, ok := options[k]; ok {
+							err := opt.PodmanTemplateParsed.Execute(&buf, v)
+							if err != nil {
+								warnings = append(warnings, fmt.Sprintf("Error formatting pod option %s: %v", k, err))
+								continue
+							}
+							formatted := buf.String()
+							cmd = append(cmd, formatted)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("Quadlet pod option not defined: %s", k))
+						}
 					}
 				}
 			}
 		}
 
 	case ".container":
+		//Get the schema
+		options, ok := quadletSchemas["container"]
+		if !ok {
+			warnings = append(warnings, "No container schema found.")
+			return cmd, warnings
+		}
+
 		resName := q.GeneratedNames["container"]
 		cmd = append(cmd, "podman", "container", "create", "--name", resName)
 
@@ -1055,22 +1197,34 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		}
 
 		// Map [Container] AutoUpdate= to label
-		if q.GeneratedNames["auto_update"] != "" {
-			cmd = append(cmd, "--label", "io.containers.autoupdate="+q.GeneratedNames["auto_update"])
-		}
+		//if q.GeneratedNames["auto_update"] != "" {
+		//	cmd = append(cmd, "--label", "io.containers.autoupdate="+q.GeneratedNames["auto_update"])
+		//}
 
 		var image string
+		var execCmd string
 		if contSec, ok := q.Sections["Container"]; ok {
 			cmd = append(cmd, getRawPodmanArgs(contSec)...)
 			for k, vals := range contSec {
+
+				if k == "Exec" {
+					// Exec is a special case since it's not a Podman CLI option. Append command and args to the end of the create command.
+					execCmd = strings.Join(vals, " ")
+					continue
+				}
+
 				for _, v := range vals {
 					switch k {
 					case "Image":
 						image = v
-					case "Environment":
-						cmd = append(cmd, "-e", v)
-					case "PublishPort":
-						cmd = append(cmd, "-p", v)
+					case "ReloadCmd":
+						continue // ReloadCmd is for systemd and does not affect Podman CLI
+					case "ReloadSignal":
+						continue // ReloadSignal is for systemd and does not affect Podman CLI
+					case "ServiceName":
+						continue // ServiceName is for systemd and does not affect Podman CLI
+					case "StartWithPod":
+						continue // StartWithPod is for systemd and does not affect Podman CLI
 					case "Volume":
 						volSource := strings.Split(v, ":")[0]
 						cleanVol := strings.TrimSuffix(volSource, ".volume")
@@ -1080,9 +1234,20 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 						cmd = append(cmd, "--network", strings.TrimSuffix(v, ".network"))
 					case "Pod":
 						cmd = append(cmd, "--pod", strings.TrimSuffix(v, ".pod"))
-					case "ContainerName", "PodmanArgs", "AutoUpdate": // Handled above or ignored
+					case "PodmanArgs": // Handled above
 					default:
-						warnings = append(warnings, fmt.Sprintf("Ignored [Container] key: %s", k))
+						var buf bytes.Buffer
+						if opt, ok := options[k]; ok {
+							err := opt.PodmanTemplateParsed.Execute(&buf, v)
+							if err != nil {
+								warnings = append(warnings, fmt.Sprintf("Error formatting container option %s: %v", k, err))
+								continue
+							}
+							formatted := buf.String()
+							cmd = append(cmd, formatted)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("Quadlet container option not defined: %s", k))
+						}
 					}
 				}
 			}
@@ -1092,6 +1257,10 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 			image = "<MISSING_IMAGE>"
 		}
 		cmd = append(cmd, image)
+		if execCmd != "" {
+			// If a command to execute is specified for the quadlet, the equivalent podman create command will have it appended at the end.
+			cmd = append(cmd, execCmd)
+		}
 
 	case ".kube":
 		// .kube doesn't use standard create, it's 'kube play'

@@ -1,4 +1,4 @@
-module github.com/fkmiec/localquad
+module github.com/fkmiec/quadctl
 
 go 1.26.1
 

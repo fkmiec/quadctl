@@ -1,4 +1,4 @@
-package main
+package schema
 
 import (
 	"bytes"
@@ -171,10 +171,9 @@ type SectionSchema struct {
 }
 
 type AttributeSchema struct {
-	Type                  AttributeType `json:"type"`
 	QuadletKey            string        `json:"quadlet-key"`    //Formated quadlet attribute key
 	PodmanKey             string        `json:"podman-key"`     //Formatted Podman CLI attribute key
-	Values                []ValueSchema `json:"values"`         //[value][description][cautions][regexp validator]. Free-form string value denoted as empty string.
+	Values                []ValueSchema `json:"values"`         //[value][description][info][regexp validator]. Free-form string value denoted as empty string.
 	AllowMultiple         bool          `json:"allow-multiple"` //True if this attribute may be specified multiple times with different values
 	QuadletTemplateString string        `json:"quadlet-template"`
 	PodmanTemplateString  string        `json:"podman-template"`
@@ -186,7 +185,7 @@ type AttributeSchema struct {
 type ValueSchema struct {
 	Value       string `json:"value"`
 	Description string `json:"description"`
-	Cautions    string `json:"cautions"`
+	Info        string `json:"info"`
 	Validator   string `json:"validator"`
 }
 
@@ -202,10 +201,12 @@ func main() {
 
 	attributeSchemas := []AttributeSchema{}
 	attributeSchema := AttributeSchema{
-		Type:                  "Name",
-		QuadletKey:            "QuadletName",
-		PodmanKey:             "PodmanName",
-		Values:                []ValueSchema{{"value", "description", "caution1", "validator"}, {"value2", "description2", "caution2", "validator2"}},
+		QuadletKey: "QuadletName",
+		PodmanKey:  "PodmanName",
+		Values: []ValueSchema{
+			{Value: "value", Description: "description", Info: "caution1", Validator: "validator"},
+			{Value: "value2", Description: "description2", Info: "caution2", Validator: "validator2"},
+		},
 		AllowMultiple:         false,
 		QuadletTemplateString: "some golang quadlet {{.}} template",
 		PodmanTemplateString:  "some golang podman {{.}} template",
