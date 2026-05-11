@@ -89,10 +89,10 @@ func optDevice() SchemaOption {
 func optType() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "Type",
-		PodmanKey:       "--opt type=",
-		Description:     "The filesystem type of Device (used with mount command -t option).",
+		PodmanKey:       "volume-type",
+		Description:     "The filesystem type of Device (used with mount command -t option). There is no equivalent podman option.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--opt type={{.Value}}",
+		PodmanTemplate:  "",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -113,10 +113,10 @@ func optImage() SchemaOption {
 func optVolumeUser() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "User",
-		PodmanKey:       "--opt uid=",
+		PodmanKey:       "--uid",
 		Description:     "The host (numeric) UID or user name to use as the owner for the volume.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--opt uid={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -125,10 +125,10 @@ func optVolumeUser() SchemaOption {
 func optVolumeGroup() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "Group",
-		PodmanKey:       "--opt gid=",
+		PodmanKey:       "--gid",
 		Description:     "The host (numeric) GID or group name to use as the group for the volume.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--opt gid={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -168,7 +168,7 @@ func optOptions() SchemaOption {
 func optPodmanArgsVolume() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "PodmanArgs",
-		PodmanKey:       "podman",
+		PodmanKey:       "podman-args",
 		Description:     "Arguments passed to end of 'podman volume create' command.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
 		PodmanTemplate:  "{{.Value}}",
@@ -180,7 +180,7 @@ func optPodmanArgsVolume() SchemaOption {
 func optGlobalArgsVolume() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "GlobalArgs",
-		PodmanKey:       "podman",
+		PodmanKey:       "global-args",
 		Description:     "Space-separated list of arguments passed directly after 'podman' command. e.g. --log-level=debug",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
 		PodmanTemplate:  "{{.Value}}",

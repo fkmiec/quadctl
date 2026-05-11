@@ -7,6 +7,7 @@ func GetNetworkOptions() []SchemaOption {
 	options := []SchemaOption{
 		optNetworkName(),
 		optDriver(),
+		optDriverSpecificOptions(),
 		optDisableDNS(),
 		optDNSServer(),
 		optGateway(),
@@ -81,7 +82,7 @@ func optDNSServer() SchemaOption {
 		PodmanKey:       "--dns",
 		Description:     "Set custom DNS servers for the network. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}} {{.Value}}",
+		PodmanTemplate:  "{{.Key}}={{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -194,7 +195,7 @@ func optSubnet() SchemaOption {
 func optPodmanArgsNetwork() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "PodmanArgs",
-		PodmanKey:       "podman",
+		PodmanKey:       "podman-args",
 		Description:     "Arguments passed to end of 'podman network create' command.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
 		PodmanTemplate:  "{{.Value}}",
@@ -206,7 +207,7 @@ func optPodmanArgsNetwork() SchemaOption {
 func optGlobalArgsNetwork() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "GlobalArgs",
-		PodmanKey:       "podman",
+		PodmanKey:       "global-args",
 		Description:     "Arguments passed directly after 'podman' command.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
 		PodmanTemplate:  "{{.Value}}",
@@ -221,7 +222,7 @@ func optContainersConfModuleNetwork() SchemaOption {
 		PodmanKey:       "--module",
 		Description:     "Load a containers.conf module. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}} {{.Value}}",
+		PodmanTemplate:  "{{.Key}}={{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -244,9 +245,9 @@ func optNetworkDeleteOnStop() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "DeleteOnStop",
 		PodmanKey:       "--delete-on-stop",
-		Description:     "Delete the network when the last container using it stops.",
+		Description:     "Delete the network when the last container using it stops. There is no equivalent podman option.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--delete-on-stop",
+		PodmanTemplate:  "",
 		AllowMultiple:   false,
 		Values: []OptionValue{
 			{Value: "true", Description: "Delete network on last container stop"},
