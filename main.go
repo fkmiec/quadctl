@@ -844,6 +844,28 @@ func handleSystemdCreate(ordered []*Quadlet, sourceDir string) {
 		targetDir = quadletUserPath
 	}
 
+	fileInfo, err := os.Stat(targetDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error accessing quadlet path %s: %v.\n", targetDir, err)
+		if targetDir == quadletUserPath {
+			fmt.Fprintf(os.Stderr, "If installing rootless quadlets to /etc/... or /run/... you may need to grant your user write permissions to the target directory.\n")
+		}
+		os.Exit(1)
+	} else {
+		if !fileInfo.IsDir() {
+			fmt.Fprintf(os.Stderr, "Quadlet path %s is not a directory. Ensure the path points to a directory and try again.\n", targetDir)
+			os.Exit(1)
+		}
+		perm := fileInfo.Mode().Perm()
+		if perm&0200 != 0200 && perm&0020 != 0020 && perm&0002 != 0002 {
+			fmt.Fprintf(os.Stderr, "Quadlet path %s is not writable. Ensure the directory is writable and try again.\n", targetDir)
+			if targetDir == quadletUserPath {
+				fmt.Fprintf(os.Stderr, "If installing rootless quadlets to /etc/containers/systemd... or /usr/share/containers/systemd... you may need to grant your user write permissions to the target directory.\n")
+			}
+			os.Exit(1)
+		}
+	}
+
 	if isPrintOnly {
 		fmt.Printf("=> [DRY-RUN] Would install quadlets to: %s\n", targetDir)
 		if useSubdirectories {
