@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,7 +45,10 @@ var (
 	isPrintOnly       = false
 	isVerbose         = false
 	isFile            = false
+	subcommand        = ""
 	searchDir         = ""
+	podmanArgs        = ""
+	runCmd            = ""
 	quadletSrcPath    = ""    // Path to the user's source directory containing quadlet folders or files
 	useSubdirectories = true  // Default to installing quadlets in a subdirectory to keep them organized
 	useSymbolicLinks  = false // Default to copying files for installation to avoid potential issues with source files being moved or deleted, but can be configured to use symbolic links for a more dynamic setup
@@ -84,6 +88,9 @@ type Command struct {
 }
 
 func (c *Command) PreCmd() {
+	if slices.Contains(c.Cmd, "run") && (!slices.Contains(c.Cmd, "-d") || !slices.Contains(c.Cmd, "--detach")) {
+		return // Skip spinner for 'run' command since it is interactive and the spinner output can interfere with the container's output.
+	}
 	c.Spinner = spinner.New(spinner.CharSets[14], 100*time.Millisecond) // Build our new spinner
 	c.Spinner.Prefix = c.Label + " "
 	c.Spinner.Start() // Start the spinner
@@ -91,12 +98,22 @@ func (c *Command) PreCmd() {
 
 func (c *Command) RunCmd() {
 	cmd := exec.Command(c.Cmd[0], c.Cmd[1:]...)
-	output, err := cmd.Output()
-	c.Output = string(output)
-	c.Error = err
+	if slices.Contains(c.Cmd, "run") && (!slices.Contains(c.Cmd, "-d") || !slices.Contains(c.Cmd, "--detach")) {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		cmd.Run()
+	} else {
+		output, err := cmd.CombinedOutput()
+		c.Output = string(output)
+		c.Error = err
+	}
 }
 
 func (c *Command) PostCmd() {
+	if slices.Contains(c.Cmd, "run") && (!slices.Contains(c.Cmd, "-d") || !slices.Contains(c.Cmd, "--detach")) {
+		return // Skip stopping the spinner for 'run' command since it is interactive and the spinner output can interfere with the container's output.
+	}
 	c.Spinner.FinalMSG = fmt.Sprintf("%s... Done\n", c.Label)
 	c.Spinner.Stop()
 }
@@ -177,7 +194,18 @@ func main() {
 
 	initConfig()
 	initSchemas()
-	initFlags()
+	flagSets := initFlags()
+
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		printUsage()
+		os.Exit(1)
+	}
+
+	subcommand = strings.ToLower(flag.Arg(0))
+	flagSets[subcommand].Parse(flag.Args()[1:])
+	searchDir = getSearchDir(flagSets[subcommand].Arg(0))
 
 	quadlets := initQuadlets()
 
@@ -187,8 +215,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error determining ordering: %v\n", err)
 		os.Exit(1)
 	}
-
-	subcommand := strings.ToLower(flag.Arg(0))
 
 	// Route to appropriate subcommand handler
 	switch subcommand {
@@ -222,6 +248,12 @@ func main() {
 			handleSystemdStart(ordered, searchDir)
 		} else {
 			handleStart(ordered)
+		}
+	case "run":
+		if isSystemd {
+			fmt.Printf("Running containers with systemd (ie. 'quadctl -s run') is not supported since systemd manages the lifecycle of services independently. Use 'start' to start the services and ensure your quadlets are configured to run the desired commands on startup.\n")
+		} else {
+			handleRun(ordered)
 		}
 	case "stop":
 		if isSystemd {
@@ -369,60 +401,146 @@ func initSchemas() {
 	quadletSchemas["kube"] = GetQuadletOptionsMap("kube")
 }
 
-func initFlags() {
+func initFlags() map[string]*flag.FlagSet {
+
+	flagSets := map[string]*flag.FlagSet{}
+
 	// Handle flags
-	//rootfulOpt := flag.Bool("rootful", false, "Execute podman commands rootful (requires sudo/root access)")
-	flag.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
-	flag.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
-	flag.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
-	flag.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
-	flag.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
-	flag.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
 	flag.BoolVar(&isSystemd, "systemd", false, "Use systemd for managing services (default: false)")
 	flag.BoolVar(&isSystemd, "s", false, "Use systemd for managing services (default: false)")
-
 	flag.Usage = printUsage
-	flag.Parse()
+	flagSets["global"] = flag.CommandLine
 
-	if flag.NArg() < 1 {
-		printUsage()
-		os.Exit(1)
-	}
+	// pull
+	pullFlags := flag.NewFlagSet("pull", flag.ExitOnError)
+	pullFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	pullFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	pullFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	pullFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	flagSets["pull"] = pullFlags
 
+	// create
+	createFlags := flag.NewFlagSet("create", flag.ExitOnError)
+	createFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	createFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	createFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	createFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	createFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
+	createFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
+	flagSets["create"] = createFlags
+
+	// start
+	startFlags := flag.NewFlagSet("start", flag.ExitOnError)
+	startFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	startFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	startFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	startFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	startFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
+	startFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
+	flagSets["start"] = startFlags
+
+	// run
+	runFlags := flag.NewFlagSet("run", flag.ExitOnError)
+	runFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	runFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	runFlags.StringVar(&podmanArgs, "pargs", "", "Additional arguments to pass to podman when using the 'run' command (e.g., --pargs='--rm -it')")
+	runFlags.StringVar(&runCmd, "exec", "", "Command to execute in the container when using the 'run' command (e.g., --exec='/bin/bash')")
+	runFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	runFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	runFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
+	runFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
+	flagSets["run"] = runFlags
+
+	// stop
+	stopFlags := flag.NewFlagSet("stop", flag.ExitOnError)
+	stopFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	stopFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	stopFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	stopFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	stopFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
+	stopFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
+	flagSets["stop"] = stopFlags
+
+	// remove
+	removeFlags := flag.NewFlagSet("remove", flag.ExitOnError)
+	removeFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	removeFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	removeFlags.BoolVar(&isPrintOnly, "print", false, "Print podman commands without executing")
+	removeFlags.BoolVar(&isPrintOnly, "p", false, "Print podman commands without executing")
+	removeFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
+	removeFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
+	flagSets["remove"] = removeFlags
+
+	// status
+	statusFlags := flag.NewFlagSet("status", flag.ExitOnError)
+	statusFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	statusFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	flagSets["status"] = statusFlags
+
+	// ps
+	psFlags := flag.NewFlagSet("ps", flag.ExitOnError)
+	psFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	psFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	flagSets["ps"] = psFlags
+
+	// stats
+	statsFlags := flag.NewFlagSet("stats", flag.ExitOnError)
+	statsFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	statsFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	flagSets["stats"] = statsFlags
+
+	// images
+	imagesFlags := flag.NewFlagSet("images", flag.ExitOnError)
+	imagesFlags.BoolVar(&isFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	imagesFlags.BoolVar(&isFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	flagSets["images"] = imagesFlags
+
+	// list, ls
+	listFlags := flag.NewFlagSet("list", flag.ExitOnError)
+	flagSets["list"] = listFlags
+
+	// logs
+	logsFlags := flag.NewFlagSet("logs", flag.ExitOnError)
+	flagSets["logs"] = logsFlags
+
+	return flagSets
+}
+
+func getSearchDir(path string) string {
 	// Determine search directory (optional path or CWD ... optional path may be relative to CWD or quadlets_path from config)
 	// If no path is specified, use the current working directory
-	var err error
-	searchDir, err = os.Getwd()
+	dir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting CWD: %v\n", err)
 		os.Exit(1)
 	}
 	// If a path is specified, determine if relative to CWD or quadlets_path
-	if flag.NArg() > 1 {
-		tmp := flag.Arg(1)
+	//if flag.NArg() > 1 {
+	if path != "" {
 		// If os.Stat returns no error, the path is absolute or valid relative to the current working directory
-		if info, err := os.Stat(tmp); err == nil {
+		if info, err := os.Stat(path); err == nil {
 			//if a file was specified, get parent directory of the file
 			if !info.IsDir() {
-				searchDir = filepath.Dir(tmp)
+				dir = filepath.Dir(path)
 			} else {
-				searchDir, _ = filepath.Abs(tmp)
+				dir, _ = filepath.Abs(path)
 			}
 			// Otherwise, look for specified directory path relative to the quadlets path
 		} else {
-			searchDir = filepath.Join(quadletSrcPath, tmp)
+			dir = filepath.Join(quadletSrcPath, path)
 			// If the path is not found relative to the quadlets path or is not a directory, it's an error
-			if info, err := os.Stat(searchDir); err == nil {
+			if info, err := os.Stat(dir); err == nil {
 				//if a file was specified, get parent directory of the file
 				if !info.IsDir() {
-					searchDir = filepath.Dir(tmp)
+					dir = filepath.Dir(path)
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: %s not found\n", tmp)
+				fmt.Fprintf(os.Stderr, "Error: %s not found\n", path)
 				os.Exit(1)
 			}
 		}
 	}
+	return dir
 }
 
 func initQuadlets() map[string]*Quadlet {
@@ -483,15 +601,19 @@ func handleCreate(ordered []*Quadlet) {
 	for _, q := range ordered {
 		//Only create if resource doesn't exist.
 		if !resourceExists(q.Type, q.ID) {
-			args, warns := generateCreateCommand(q)
-			for _, w := range warns {
-				warnings = append(warnings, fmt.Sprintf("[WARN] %s: %s\n", q.Filepath, w))
+			// For 'run' command, skip creating containers since 'podman run' will create them if they don't exist.
+			if subcommand == "run" && q.Type == ".container" {
+				continue
 			}
+			args, warns := generateCreateCommand(q)
 			cmd := Command{
 				Label:  fmt.Sprintf("Creating %s %s", q.Type, q.ID),
 				Cmd:    args,
 				Output: "",
 				Error:  nil,
+			}
+			for _, w := range warns {
+				warnings = append(warnings, fmt.Sprintf("[WARN] %s: %s\n", q.Filepath, w))
 			}
 
 			// Warn about auto-restart configuration and podman-restart.service requirement, if applicable
@@ -542,7 +664,7 @@ func runCommands(commands []Command, warnings []string) {
 			c.RunCmd()
 			c.PostCmd()
 			if c.Error != nil && isVerbose {
-				fmt.Fprintf(os.Stderr, "Error executing command '%s': %v\nOutput: %s\n", strings.Join(c.Cmd, " "), c.Error, c.Output)
+				fmt.Fprintf(os.Stderr, "Error executing command:\n\n  %s\n\n  %s\n", strings.Join(c.Cmd, " "), c.Output)
 			}
 		}
 	}
@@ -605,6 +727,39 @@ func handleStart(ordered []*Quadlet) {
 	runCommands(commands, warnings)
 }
 
+// Call handleCreate. Then start.
+func handleRun(ordered []*Quadlet) {
+
+	//Create, if necessary
+	handleCreate(ordered)
+
+	//Collect all warnings and print them together to avoid interleaving with commands
+	warnings := []string{}
+	commands := []Command{}
+
+	//Start
+	for _, q := range ordered {
+		// Only run containers. Pods, networks and volumes will be started/created as needed by the containers.
+		if q.Type != ".container" {
+			continue
+		}
+		// For 'run' command, we need to generate 'podman run' commands instead of 'podman start' for containers.
+		cmd, warns := generateRunCommand(q)
+		for _, w := range warns {
+			warnings = append(warnings, fmt.Sprintf("[WARN] %s: %s\n", q.Filepath, w))
+		}
+		if len(cmd) > 0 {
+			commands = append(commands, Command{
+				Label:  fmt.Sprintf("Running %s %s", q.Type, q.ID),
+				Cmd:    cmd,
+				Output: "",
+				Error:  nil,
+			})
+		}
+	}
+	runCommands(commands, warnings)
+}
+
 func handleStop(ordered []*Quadlet) {
 
 	//Collect all warnings and print them together to avoid interleaving with commands
@@ -615,12 +770,14 @@ func handleStop(ordered []*Quadlet) {
 	for i := len(ordered) - 1; i >= 0; i-- {
 		q := ordered[i]
 		cmd := generateStopCommand(q)
-		commands = append(commands, Command{
-			Label:  fmt.Sprintf("Stopping %s %s", q.Type, q.ID),
-			Cmd:    cmd,
-			Output: "",
-			Error:  nil,
-		})
+		if cmd != nil && len(cmd) > 0 {
+			commands = append(commands, Command{
+				Label:  fmt.Sprintf("Stopping %s %s", q.Type, q.ID),
+				Cmd:    cmd,
+				Output: "",
+				Error:  nil,
+			})
+		}
 	}
 	runCommands(commands, warnings)
 }
@@ -790,7 +947,6 @@ func handleRemove(ordered []*Quadlet) {
 			continue
 		}
 
-		fmt.Printf("=> Removing %s %s...\n", resType, resName)
 		rmCmd := []string{"podman"}
 		switch resType {
 		case ".container":
@@ -1823,12 +1979,27 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		var image string
 		var execCmd string
 		if contSec, ok := q.Sections["Container"]; ok {
-			cmd = append(cmd, getRawPodmanArgs(contSec)...)
+			configuredPodmanArgs := getRawPodmanArgs(contSec)
+
+			// Special handling for quadctl run command. It's basically same as create, but allows for specifying podman args and a command to execute.
+			if podmanArgs != "" {
+				// If PodmanArgs were also provided via CLI, we will append them after the ones from the quadlet file.
+				// This allows CLI args to override quadlet args if there are conflicts, since in Podman CLI the last specified flag takes precedence.
+				configuredPodmanArgs = append(configuredPodmanArgs, strings.Fields(podmanArgs)...)
+			}
+			if runCmd != "" {
+				execCmd = runCmd
+			}
+
+			cmd = append(cmd, configuredPodmanArgs...)
 			for k, vals := range contSec {
 
 				if k == "Exec" {
 					// Exec is a special case since it's not a Podman CLI option. Append command and args to the end of the create command.
-					execCmd = strings.Join(vals, " ")
+					// Ignore quadlet file Exec option if --exec flag was passed on the CLI
+					if execCmd == "" {
+						execCmd = strings.Join(vals, " ")
+					}
 					continue
 				}
 
@@ -1930,6 +2101,15 @@ func generateStartupCommand(q *Quadlet) ([]string, []string) {
 	}
 
 	return cmd, warnings
+}
+
+// generateStartupCommand creates necessary 'start' commands based on existence.
+func generateRunCommand(q *Quadlet) ([]string, []string) {
+	createCmd, warnings := generateCreateCommand(q)
+	runCmd := []string{"podman", "run"}
+	runCmd = append(runCmd, createCmd[3:]...) // Replace 'podman container create' with 'podman run'
+
+	return runCmd, warnings
 }
 
 func generateStopCommand(q *Quadlet) []string {
