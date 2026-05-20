@@ -285,7 +285,7 @@ func main() {
 		} else {
 			commands = handleStop(ordered)
 		}
-	case "remove":
+	case "remove", "rm":
 		if isSystemd {
 			commands = handleSystemdRemove(ordered, searchDir)
 		} else {
@@ -494,6 +494,7 @@ func initFlags() map[string]*flag.FlagSet {
 	removeFlags.BoolVar(&isVerbose, "verbose", false, "Print detailed information about command execution and warnings")
 	removeFlags.BoolVar(&isVerbose, "v", false, "Print detailed information about command execution and warnings")
 	flagSets["remove"] = removeFlags
+	flagSets["rm"] = removeFlags
 
 	// status
 	statusFlags := flag.NewFlagSet("status", flag.ExitOnError)
@@ -522,6 +523,7 @@ func initFlags() map[string]*flag.FlagSet {
 	// list, ls
 	listFlags := flag.NewFlagSet("list", flag.ExitOnError)
 	flagSets["list"] = listFlags
+	flagSets["ls"] = listFlags
 
 	// logs
 	logsFlags := flag.NewFlagSet("logs", flag.ExitOnError)
@@ -669,7 +671,14 @@ func runCommands(commands []Command) {
 	if isPrintOnly && len(commands) > 0 {
 		fmt.Println("\n# --- DRY-RUN MODE: Commands that would be executed ---\n")
 		for _, c := range commands {
-			fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
+			if len(c.Cmd) > 0 {
+				fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
+			} else {
+				fmt.Printf("  %s\n", c.Label)
+				for _, line := range c.Output {
+					fmt.Println("   => " + line)
+				}
+			}
 		}
 	} else if len(commands) > 0 {
 		for _, c := range commands {
@@ -794,7 +803,7 @@ func handleSystemdReload() []Command {
 		fmt.Fprintf(os.Stderr, "Error executing systemd reload template: %v\n", err)
 		os.Exit(1)
 	}
-	command := strings.Fields(buf.String())
+	command := parseFields(buf.String())
 	cmd := NewCommand("Reloading systemd")
 	cmd.Cmd = command
 	return []Command{cmd}
@@ -836,7 +845,7 @@ func handleSystemdStart(ordered []*Quadlet, searchDir string) []Command {
 	// Only start the pod and any loose containers
 	for _, q := range ordered {
 		if q.Type == ".container" && q.ParentPod == "" || q.Type == ".pod" {
-			args := strings.Fields(buf.String())
+			args := parseFields(buf.String())
 			args = append(args, q.ServiceName)
 			cmd := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
 			cmd.Cmd = args
@@ -867,16 +876,16 @@ func handleSystemdStop(ordered []*Quadlet, stopNetAndVol bool) []Command {
 		var args []string
 		// Stop a container directly only if it is not part of a pod.
 		if q.Type == ".container" && q.ParentPod == "" {
-			args = strings.Fields(buf.String())
+			args = parseFields(buf.String())
 			args = append(args, q.ServiceName)
 		} else if q.Type == ".pod" {
 			// Stop the pod and any related containers.
-			args = strings.Fields(buf.String())
+			args = parseFields(buf.String())
 			args = append(args, q.ServiceName)
 		} else {
 			// Stop network and volume services (Only used when called by handleUninstall. Ensures cleanup of volumes and networks).
 			if stopNetAndVol && (q.Type == ".network" || q.Type == ".volume") {
-				args = strings.Fields(buf.String())
+				args = parseFields(buf.String())
 				args = append(args, q.ServiceName)
 			}
 		}
@@ -905,7 +914,7 @@ func handleSystemdStatus(ordered []*Quadlet) []Command {
 		os.Exit(1)
 	}
 
-	args := strings.Fields(buf.String())
+	args := parseFields(buf.String())
 	for _, q := range ordered {
 		args = append(args, q.ServiceName)
 	}
@@ -929,7 +938,7 @@ func handleSystemdLogs(ordered []*Quadlet) []Command {
 		fmt.Fprintf(os.Stderr, "Error executing systemd logs: %v\n", err)
 		os.Exit(1)
 	}
-	cmd := strings.Fields(buf.String())
+	cmd := parseFields(buf.String())
 	c := NewCommand("Opening systemd logs")
 	c.Cmd = cmd
 	commands = append(commands, c)
@@ -1033,105 +1042,127 @@ func handleSystemdCreate(ordered []*Quadlet, sourceDir string) []Command {
 		c.PreFn = func(c *Command) {}
 		c.PostFn = func(c *Command) {}
 	}
-	c.RunFn = func(c *Command) {
+
+	// Systemd create is mostly file operations.
+	// For file operations, we use golang functions rather than podman, systemd or bash commands ...
+	// Encapsulate code to run in a slice of functions that will be executed in a custom command when the command is run.
+	funcs := []func(){}
+	c.Output = append(c.Output, fmt.Sprintf("Creating target directory %s", targetDir))
+	f := func() {
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating target directory: %v\n", err)
 			os.Exit(1)
 		}
-		// Use links if configured to do so
-		if useSymbolicLinks {
-			if isVerbose {
-				c.Output = append(c.Output, "Using symbolic links for installation.")
-				//fmt.Println("Using symbolic links for installation.")
-			}
-			if useSubdirectories {
-				// Link the entire source directory as a subdirectory in the target location to keep related quadlets together
-				dest := filepath.Join(targetDir, filepath.Base(sourceDir))
-				if isVerbose {
-					c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", dest, sourceDir))
-				}
+	}
+	funcs = append(funcs, f)
+
+	// Use links if configured to do so
+	if useSymbolicLinks {
+		c.Output = append(c.Output, "Using symbolic links for installation.")
+		if useSubdirectories {
+			// Link the entire source directory as a subdirectory in the target location to keep related quadlets together
+			dest := filepath.Join(targetDir, filepath.Base(sourceDir))
+			c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", dest, sourceDir))
+			f := func() {
 				if err := os.Symlink(sourceDir, dest); err != nil {
 					//if err := runCommand([]string{prefix, "ln", "-s", sourceDir, filepath.Join(targetDir, filepath.Base(sourceDir))}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error linking target directory: %v\n", err)
 					os.Exit(1)
 				}
-			} else {
-				// Link the individual quadlet files directly into the target location
-				for _, q := range ordered {
-					dest := filepath.Join(targetDir, filepath.Base(q.Filepath))
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Linking %s -> %s", dest, q.Filepath))
-						//fmt.Printf(" Linking %s to %s\n", q.Filepath, dest)
-					}
+			}
+			funcs = append(funcs, f)
+		} else {
+			// Link the individual quadlet files directly into the target location
+			for _, q := range ordered {
+				dest := filepath.Join(targetDir, filepath.Base(q.Filepath))
+				c.Output = append(c.Output, fmt.Sprintf("Linking %s -> %s", dest, q.Filepath))
+				f := func() {
 					if err := os.Symlink(q.Filepath, dest); err != nil {
 						//if err := runCommand([]string{prefix, "ln", "-s", q.Filepath, dest}); err != nil {
 						fmt.Fprintf(os.Stderr, " Failed to link: %v\n", err)
+						os.Exit(1)
 					}
-
-					// Also link drop-in directory if exists
-					dropInDir := q.Filepath + ".d"
-					if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
-						destDropIn := dest + ".d"
-						if isVerbose {
-							c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", destDropIn, dropInDir))
-							//fmt.Printf(" Linking directory %s to %s\n", dropInDir, destDropIn)
-						}
+				}
+				funcs = append(funcs, f)
+				// Also link drop-in directory if exists
+				dropInDir := q.Filepath + ".d"
+				if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
+					destDropIn := dest + ".d"
+					c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", destDropIn, dropInDir))
+					f := func() {
 						if err := os.Symlink(dropInDir, destDropIn); err != nil {
 							//if err := runCommand([]string{prefix, "ln", "-s", dropInDir, destDropIn}); err != nil {
 							fmt.Fprintf(os.Stderr, "  Failed to link dir: %v\n", err)
+							os.Exit(1)
 						}
 					}
-				}
-			}
-			// Otherwise copy files to the target directory using podman quadlet install
-		} else {
-			var destDropIn string
-
-			// If the user configured to use a subdirectory to organize quadlets, we create the directory and move files after podman quadlet install step.
-			if useSubdirectories {
-				//Create the subdirectory at target location
-				dest := filepath.Join(targetDir, filepath.Base(sourceDir))
-				if isVerbose {
-					c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(sourceDir), dest))
-				}
-				copyDir(sourceDir, dest)
-			} else {
-				for _, q := range ordered {
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Copying file %s to %s", filepath.Base(q.Filepath), filepath.Join(targetDir, filepath.Base(q.Filepath))))
-					}
-					copyFile(q.Filepath, filepath.Join(targetDir, filepath.Base(q.Filepath)))
-				}
-			}
-			// Copy drop-in directories if exist
-			for _, q := range ordered {
-				dropInDir := q.Filepath + ".d"
-				if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
-
-					// Set dropInDir
-					if useSubdirectories {
-						destDropIn = filepath.Join(targetDir, filepath.Base(sourceDir), filepath.Base(q.Filepath)+".d")
-					} else {
-						destDropIn = filepath.Join(targetDir, filepath.Base(q.Filepath)+".d")
-					}
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(dropInDir), destDropIn))
-					}
-					if err := copyDir(dropInDir, destDropIn); err != nil {
-						fmt.Fprintf(os.Stderr, "  Failed to copy dir: %v\n", err)
-					}
+					funcs = append(funcs, f)
 				}
 			}
 		}
+		// Otherwise copy files to the target directory using podman quadlet install
+	} else {
+		var destDropIn string
+		// If the user configured to use a subdirectory to organize quadlets, we create the directory and move files after podman quadlet install step.
+		if useSubdirectories {
+			//Create the subdirectory at target location
+			dest := filepath.Join(targetDir, filepath.Base(sourceDir))
+			c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(sourceDir), dest))
+			f := func() {
+				if err := copyDir(sourceDir, dest); err != nil {
+					fmt.Fprintf(os.Stderr, "  Failed to copy dir: %v\n", err)
+					os.Exit(1)
+				}
+			}
+			funcs = append(funcs, f)
+		} else {
+			for _, q := range ordered {
+				c.Output = append(c.Output, fmt.Sprintf("Copying file %s to %s", filepath.Base(q.Filepath), filepath.Join(targetDir, filepath.Base(q.Filepath))))
+				f := func() {
+					if err := copyFile(q.Filepath, filepath.Join(targetDir, filepath.Base(q.Filepath))); err != nil {
+						fmt.Fprintf(os.Stderr, "  Failed to copy file: %v\n", err)
+						os.Exit(1)
+					}
+				}
+				funcs = append(funcs, f)
+			}
+		}
+		// Copy drop-in directories if exist
+		for _, q := range ordered {
+			dropInDir := q.Filepath + ".d"
+			if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
 
+				// Set dropInDir
+				if useSubdirectories {
+					destDropIn = filepath.Join(targetDir, filepath.Base(sourceDir), filepath.Base(q.Filepath)+".d")
+				} else {
+					destDropIn = filepath.Join(targetDir, filepath.Base(q.Filepath)+".d")
+				}
+				c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(dropInDir), destDropIn))
+				f := func() {
+					if err := copyDir(dropInDir, destDropIn); err != nil {
+						fmt.Fprintf(os.Stderr, "  Failed to copy dir: %v\n", err)
+						os.Exit(1)
+					}
+				}
+				funcs = append(funcs, f)
+			}
+		}
+	}
+
+	// Custom run function that will, when executed by runCommands(), execute the anonymous functions created above.
+	c.RunFn = func(c *Command) {
+		for _, f := range funcs {
+			f()
+		}
 		if isVerbose {
-			fmt.Println(c.Label + "...")
+			fmt.Println(c.Label + "... Done")
 			for _, line := range c.Output {
 				fmt.Println(" => " + line)
 			}
-			fmt.Println("... Done")
 		}
 	}
+
 	commands = append(commands, c)
 
 	// Reload systemd to recognize the new quadlet services
@@ -1154,101 +1185,121 @@ func handleSystemdRemove(ordered []*Quadlet, sourceDir string) []Command {
 	cmds := handleSystemdStop(ordered, true)
 	commands = append(commands, cmds...)
 
+	// Systemd removal is mostly file operations.
+	// For file operations, we use golang functions rather than podman, systemd or bash commands ...
+	// Encapsulate code to run in a slice of functions that will be executed in a custom command when the command is run.
+	funcs := []func(){}
 	c := NewCommand(fmt.Sprintf("Removing quadlets from %s", targetDir))
 	if isVerbose {
 		c.PreFn = func(c *Command) {}
 		c.PostFn = func(c *Command) {}
 	}
-	c.RunFn = func(c *Command) {
 
-		//If targetDir exists, remove files.
-		if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
-			if useSymbolicLinks {
-				if useSubdirectories {
-					//remove link to directory
-					link := filepath.Join(targetDir, filepath.Base(sourceDir))
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", link))
-					}
+	//If targetDir exists, remove files.
+	if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+		if useSymbolicLinks {
+			if useSubdirectories {
+				//remove link to directory
+				link := filepath.Join(targetDir, filepath.Base(sourceDir))
+				c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", link))
+				f := func() {
 					_ = os.Remove(link)
-				} else {
-					//remove individual file links
-					for _, q := range ordered {
-						dest := filepath.Join(targetDir, filepath.Base(q.Filepath))
-						if isVerbose {
-							c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", dest))
-						}
+				}
+				funcs = append(funcs, f)
+			} else {
+				//remove individual file links
+				for _, q := range ordered {
+					dest := filepath.Join(targetDir, filepath.Base(q.Filepath))
+					c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", dest))
+					f := func() {
 						if err := os.Remove(dest); err != nil {
 							fmt.Fprintf(os.Stderr, "Failed to remove %s: %v\n", dest, err)
 						}
-						// Also remove link to drop-in directory if exists
-						dropInDir := dest + ".d"
-						if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
-							if isVerbose {
-								c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", dropInDir))
-							}
+					}
+					funcs = append(funcs, f)
+					// Also remove link to drop-in directory if exists
+					dropInDir := dest + ".d"
+					if info, err := os.Stat(dropInDir); err == nil && info.IsDir() {
+						c.Output = append(c.Output, fmt.Sprintf("Removing symbolic link: %s", dropInDir))
+						f := func() {
 							if err := os.Remove(dropInDir); err != nil {
 								fmt.Fprintf(os.Stderr, "Failed to remove symlink to drop-in dir %s: %v\n", dropInDir, err)
 							}
 						}
+						funcs = append(funcs, f)
 					}
 				}
-			} else {
-				if useSubdirectories {
-					//remove directory and all files within
-					dest := filepath.Join(targetDir, filepath.Base(sourceDir))
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Removing directory and files at: %s", dest))
-					}
+			}
+		} else {
+			if useSubdirectories {
+				//remove directory and all files within
+				dest := filepath.Join(targetDir, filepath.Base(sourceDir))
+				c.Output = append(c.Output, fmt.Sprintf("Removing directory and files at: %s", dest))
+				f := func() {
 					_ = os.RemoveAll(dest)
-				} else {
-					for _, q := range ordered {
-						file := filepath.Join(targetDir, filepath.Base(q.Filepath))
-						if info, err := os.Stat(file); err == nil && info.IsDir() {
-							if isVerbose {
-								c.Output = append(c.Output, fmt.Sprintf("Removing file: %s", file))
-							}
+				}
+				funcs = append(funcs, f)
+			} else {
+				for _, q := range ordered {
+					file := filepath.Join(targetDir, filepath.Base(q.Filepath))
+					if info, err := os.Stat(file); err == nil && info.IsDir() {
+						c.Output = append(c.Output, fmt.Sprintf("Removing file: %s", file))
+						f := func() {
 							if err := os.Remove(file); err != nil {
 								fmt.Fprintf(os.Stderr, "Failed to remove file %s: %v\n", file, err)
 							}
 						}
-					}
-				}
-			}
-
-			//Expressly remove volume and network resources that might be left behind
-			for _, q := range ordered {
-				if q.Type == ".volume" && isRemoveVolumes {
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Removing volume %s", q.ID))
-						//fmt.Printf("=> Removing volume %s...\n", q.ID)
-					}
-					//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
-					if volName := q.Sections["Volume"]["VolumeName"]; volName != nil {
-						_ = runCommandSilently([]string{"podman", "volume", "rm", "-f", volName[0]})
-					} else {
-						_ = runCommandSilently([]string{"podman", "volume", "rm", "-f", "systemd-" + q.ID})
-					}
-				}
-				if q.Type == ".network" && isRemoveNetworks {
-					if isVerbose {
-						c.Output = append(c.Output, fmt.Sprintf("Removing network %s", q.ID))
-					}
-					//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
-					if networkName := q.Sections["Network"]["NetworkName"]; networkName != nil {
-						_ = runCommandSilently([]string{"podman", "network", "rm", "-f", networkName[0]})
-					} else {
-						_ = runCommandSilently([]string{"podman", "network", "rm", "-f", "systemd-" + q.ID})
+						funcs = append(funcs, f)
 					}
 				}
 			}
 		}
+
+		//Expressly remove volume and network resources that might be left behind
+		for _, q := range ordered {
+			if q.Type == ".volume" && isRemoveVolumes {
+				c.Output = append(c.Output, fmt.Sprintf("Removing volume %s", q.ID))
+				var fn func()
+				//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
+				if volName := q.Sections["Volume"]["VolumeName"]; volName != nil {
+					fn = func() {
+						_ = runCommandSilently([]string{"podman", "volume", "rm", "-f", volName[0]})
+					}
+				} else {
+					fn = func() {
+						_ = runCommandSilently([]string{"podman", "volume", "rm", "-f", "systemd-" + q.ID})
+					}
+				}
+				funcs = append(funcs, fn)
+			}
+			if q.Type == ".network" && isRemoveNetworks {
+				c.Output = append(c.Output, fmt.Sprintf("Removing network %s", q.ID))
+				var fn func()
+				//Default name has systemd- prefix. If non-default name was specified, use it, otherwise use default prefix.
+				if networkName := q.Sections["Network"]["NetworkName"]; networkName != nil {
+					fn = func() {
+						_ = runCommandSilently([]string{"podman", "network", "rm", "-f", networkName[0]})
+					}
+				} else {
+					fn = func() {
+						_ = runCommandSilently([]string{"podman", "network", "rm", "-f", "systemd-" + q.ID})
+					}
+				}
+				funcs = append(funcs, fn)
+			}
+		}
+	}
+
+	// Custom run function that will, when executed by runCommands(), execute the anonymous functions created above.
+	c.RunFn = func(c *Command) {
+		for _, f := range funcs {
+			f()
+		}
 		if isVerbose {
-			fmt.Println(c.Label + "...")
+			fmt.Println(c.Label + "... Done")
 			for _, line := range c.Output {
 				fmt.Println(" => " + line)
 			}
-			fmt.Println("... Done")
 		}
 	}
 
@@ -1708,7 +1759,14 @@ func parseIniFile(path string, q *Quadlet) error {
 			if len(parts) == 2 {
 				key := strings.TrimSpace(parts[0])
 				val := strings.TrimSpace(parts[1])
-				q.Sections[currentSection][key] = append(q.Sections[currentSection][key], val)
+
+				//Handle options specified using a multiple space-separated value format
+				values := parseFields(val)
+				for _, v := range values {
+					q.Sections[currentSection][key] = append(q.Sections[currentSection][key], v)
+				}
+
+				//q.Sections[currentSection][key] = append(q.Sections[currentSection][key], val)
 			}
 		}
 	}
@@ -1789,7 +1847,7 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		var args []string
 		for _, argStr := range section["PodmanArgs"] {
 			// Use Fields to parse space-separated flags
-			args = append(args, strings.Fields(argStr)...)
+			args = append(args, parseFields(argStr)...)
 		}
 		return args
 	}
@@ -1829,7 +1887,7 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 							}
 							formatted := buf.String()
 							// Use Fields to parse space-separated flags
-							cmd = append(cmd, strings.Fields(formatted)...)
+							cmd = append(cmd, parseFields(formatted)...)
 
 						} else {
 							warnings = append(warnings, fmt.Sprintf("Quadlet volume option not defined: %s", k))
@@ -1871,7 +1929,7 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 							}
 							formatted := buf.String()
 							// Use Fields to parse space-separated flags
-							cmd = append(cmd, strings.Fields(formatted)...)
+							cmd = append(cmd, parseFields(formatted)...)
 						} else {
 							warnings = append(warnings, fmt.Sprintf("Quadlet network option not defined: %s", k))
 						}
@@ -1909,7 +1967,7 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 							}
 							formatted := buf.String()
 							// Use Fields to parse space-separated flags
-							cmd = append(cmd, strings.Fields(formatted)...)
+							cmd = append(cmd, parseFields(formatted)...)
 						} else {
 							warnings = append(warnings, fmt.Sprintf("Quadlet pod option not defined: %s", k))
 						}
@@ -1948,7 +2006,7 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 			if podmanArgs != "" {
 				// If PodmanArgs were also provided via CLI, we will append them after the ones from the quadlet file.
 				// This allows CLI args to override quadlet args if there are conflicts, since in Podman CLI the last specified flag takes precedence.
-				configuredPodmanArgs = append(configuredPodmanArgs, strings.Fields(podmanArgs)...)
+				configuredPodmanArgs = append(configuredPodmanArgs, parseFields(podmanArgs)...)
 			}
 			if runCmd != "" {
 				execCmd = runCmd
@@ -1956,6 +2014,16 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 
 			cmd = append(cmd, configuredPodmanArgs...)
 			for k, vals := range contSec {
+				opt, ok := options[k]
+				if !ok {
+					warnings = append(warnings, fmt.Sprintf("Quadlet container option not defined: %s", k))
+					continue
+				}
+				// Check if multiple values and not supported
+				if !opt.AllowMultiple && len(vals) > 1 {
+					warnings = append(warnings, fmt.Sprintf("Option %s does not accept multiple space-separated values: '%s'\n", k, strings.Join(vals, " ")))
+					continue
+				}
 
 				if k == "Exec" {
 					// Exec is a special case since it's not a Podman CLI option. Append command and args to the end of the create command.
@@ -1988,22 +2056,20 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 					case "PodmanArgs": // Handled above
 					default:
 						var buf bytes.Buffer
-						if opt, ok := options[k]; ok {
-							if k == "Pod" {
-								v = strings.TrimSuffix(v, ".pod")
-							}
-							option := Option{Key: opt.PodmanKey, Value: v}
-							err := opt.PodmanTemplateParsed.Execute(&buf, option)
-							if err != nil {
-								warnings = append(warnings, fmt.Sprintf("Error formatting container option %s: %v", k, err))
-								continue
-							}
-							formatted := buf.String()
-							// Use Fields to parse space-separated flags
-							cmd = append(cmd, strings.Fields(formatted)...)
-						} else {
-							warnings = append(warnings, fmt.Sprintf("Quadlet container option not defined: %s", k))
+
+						if k == "Pod" {
+							v = strings.TrimSuffix(v, ".pod")
 						}
+
+						option := Option{Key: opt.PodmanKey, Value: v}
+						err := opt.PodmanTemplateParsed.Execute(&buf, option)
+						if err != nil {
+							warnings = append(warnings, fmt.Sprintf("Error formatting container option %s: %v", k, err))
+							continue
+						}
+						formatted := buf.String()
+						// Use Fields to parse space-separated flags
+						cmd = append(cmd, parseFields(formatted)...)
 					}
 				}
 			}
@@ -2019,6 +2085,52 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		}
 	}
 	return cmd, warnings
+}
+
+// parseFields splits a space-separated string into a slice,
+// preserving spaces within quoted values.
+func parseFields(input string) []string {
+	var fields []string
+	if len(strings.TrimSpace(input)) == 0 {
+		return fields
+	}
+
+	var currentToken strings.Builder
+	inQuotes := false
+
+	for _, r := range input {
+		switch r {
+		case '"':
+			inQuotes = !inQuotes
+			// We skip writing the quote character to the builder.
+			// This automatically strips out the quotes while keeping the contents.
+		case ' ':
+			if inQuotes {
+				currentToken.WriteRune(r)
+			} else {
+				// Space outside of quotes terminates the current key=value pair
+				if currentToken.Len() > 0 {
+					fields = append(fields, currentToken.String())
+					currentToken.Reset()
+				}
+			}
+		default:
+			currentToken.WriteRune(r)
+		}
+	}
+
+	// Catch the final pair if the string doesn't end with a trailing space
+	if currentToken.Len() > 0 {
+		fields = append(fields, currentToken.String())
+	}
+
+	//Quote any unquoted (previously quoted) strings with spaces
+	for i, f := range fields {
+		if strings.Contains(f, " ") {
+			fields[i] = fmt.Sprintf("\"%s\"", f)
+		}
+	}
+	return fields
 }
 
 // generateStartupCommand creates necessary 'start' commands based on existence.
