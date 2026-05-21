@@ -137,6 +137,7 @@ var ValidatorPatterns = map[string]string{
 func GetContainerOptions() []SchemaOption {
 	options := []SchemaOption{
 		// Image and naming
+		optContainerServiceName(),
 		optContainerImage(),
 		optContainerName(),
 		optPull(),
@@ -172,6 +173,7 @@ func GetContainerOptions() []SchemaOption {
 		optMemory(),
 		optShmSize(),
 		optCgroupsMode(),
+		optCgroupNS(),
 
 		// User and groups
 		optUser(),
@@ -259,6 +261,18 @@ func GetContainerOptions() []SchemaOption {
 }
 
 // Helper functions for container options
+func optContainerServiceName() SchemaOption {
+	return SchemaOption{
+		QuadletKey:      "ServiceName",
+		PodmanKey:       "--service-name",
+		Description:     "Assign a name to the Systemd service. Default is <unitname>. No equivalent podman CLI option.",
+		QuadletTemplate: "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "",
+		AllowMultiple:   false,
+		Values:          []OptionValue{},
+	}
+}
+
 func optContainerImage() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "Image",
@@ -301,7 +315,7 @@ func optDropCapability() SchemaOption {
 		PodmanKey:       "--cap-drop",
 		Description:     "Drop Linux capabilities from the default set, or 'all' to drop all capabilities. This is a space-separated list.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          KnownValueSets["capability"],
 	}
@@ -435,7 +449,7 @@ func optDNSOption() SchemaOption {
 		PodmanKey:       "--dns-option",
 		Description:     "Set custom DNS options. Can be specified multiple times. Invalid with Network=none or Network=container:id.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -521,7 +535,7 @@ func optShmSize() SchemaOption {
 		PodmanKey:       "--shm-size",
 		Description:     "Size of /dev/shm. Units: b (bytes), k (kibibytes), m (mebibytes), g (gibibytes). Default: 64m. When 0, no limit.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -533,9 +547,21 @@ func optCgroupsMode() SchemaOption {
 		PodmanKey:       "--cgroups",
 		Description:     "Determines whether the container creates cgroups. Default for Quadlet is 'split' (different from CLI default 'enabled').",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          KnownValueSets["cgroups_mode"],
+	}
+}
+
+func optCgroupNS() SchemaOption {
+	return SchemaOption{
+		QuadletKey:      "CgroupNS",
+		PodmanKey:       "--cgroupns",
+		Description:     "cgroup namespace to use",
+		QuadletTemplate: "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
+		AllowMultiple:   false,
+		Values:          []OptionValue{},
 	}
 }
 
@@ -570,7 +596,7 @@ func optGroupAdd() SchemaOption {
 		PodmanKey:       "--group-add",
 		Description:     "Assign additional groups to the primary user. Use 'keep-groups' to keep supplementary group access.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values: []OptionValue{
 			{Value: "keep-groups", Description: "Keep supplementary group access"},
@@ -584,7 +610,7 @@ func optUIDMap() SchemaOption {
 		PodmanKey:       "--uidmap",
 		Description:     "Run in a new user namespace with UID mapping. Format: [flags]container_uid:from_uid[:amount]. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -596,7 +622,7 @@ func optGIDMap() SchemaOption {
 		PodmanKey:       "--gidmap",
 		Description:     "Run in a new user namespace with GID mapping. Format: [flags]container_gid:from_gid[:amount]. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -608,7 +634,7 @@ func optSubUIDMap() SchemaOption {
 		PodmanKey:       "--subuidname",
 		Description:     "Run in a new user namespace using the map with name in /etc/subuid. Conflicts with UserNS= and UIDMap=.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -620,7 +646,7 @@ func optSubGIDMap() SchemaOption {
 		PodmanKey:       "--subgidname",
 		Description:     "Run in a new user namespace using the map with name in /etc/subgid. Conflicts with UserNS= and GIDMap=.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -643,8 +669,8 @@ func optMount() SchemaOption {
 		QuadletKey:      "Mount",
 		PodmanKey:       "--mount",
 		Description:     "Attach a filesystem mount to the container. Format: type=TYPE,TYPE-SPECIFIC-OPTION[,...]. Supports: artifact, bind, devpts, glob, image, ramfs, tmpfs, volume.",
-		QuadletTemplate: "{{.Key}}=type={{.Value}}",
-		PodmanTemplate:  "{{.Key}} type={{.Value}}",
+		QuadletTemplate: "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values: []OptionValue{
 			{Value: "bind", Description: "Bind mount from host"},
@@ -742,7 +768,7 @@ func optHealthCmd() SchemaOption {
 		PodmanKey:       "--health-cmd",
 		Description:     "Set or alter a healthcheck command. Use 'none' to disable. Multiple options in JSON array form.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -754,7 +780,7 @@ func optHealthInterval() SchemaOption {
 		PodmanKey:       "--health-interval",
 		Description:     "Set interval for healthchecks. Use 'disable' for no timer. Default: 30s.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -766,7 +792,7 @@ func optHealthTimeout() SchemaOption {
 		PodmanKey:       "--health-timeout",
 		Description:     "Maximum time for healthcheck command to complete. Format: 1m22s. Default: 30s. Command gets SIGKILL if timeout exceeded.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -778,7 +804,7 @@ func optHealthRetries() SchemaOption {
 		PodmanKey:       "--health-retries",
 		Description:     "Number of retries before healthcheck is unhealthy. Default: 3.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -790,7 +816,7 @@ func optHealthStartPeriod() SchemaOption {
 		PodmanKey:       "--health-start-period",
 		Description:     "Initialization time for container bootstrap. Format: 2m3s. Default: 0s. Health stays 'starting' until this period or first success.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -802,7 +828,7 @@ func optHealthStartupCmd() SchemaOption {
 		PodmanKey:       "--health-startup-cmd",
 		Description:     "Startup healthcheck command to run until successful.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -814,7 +840,7 @@ func optHealthStartupInterval() SchemaOption {
 		PodmanKey:       "--health-startup-interval",
 		Description:     "Interval between startup healthcheck attempts. Default: 5s.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -826,7 +852,7 @@ func optHealthStartupTimeout() SchemaOption {
 		PodmanKey:       "--health-startup-timeout",
 		Description:     "Maximum time for startup healthcheck to complete. Default: 30s.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -838,7 +864,7 @@ func optHealthStartupRetries() SchemaOption {
 		PodmanKey:       "--health-startup-retries",
 		Description:     "Number of startup healthcheck failures to tolerate before failure. Default: 0 (any success starts regular checks).",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -850,7 +876,7 @@ func optHealthStartupSuccess() SchemaOption {
 		PodmanKey:       "--health-startup-success",
 		Description:     "Number of successful startup healthcheck runs before regular health checks begin. Default: 0.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -862,7 +888,7 @@ func optHealthOnFailure() SchemaOption {
 		PodmanKey:       "--health-on-failure",
 		Description:     "Action to take when container becomes unhealthy. Default: none.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          KnownValueSets["health_on_failure"],
 	}
@@ -874,7 +900,7 @@ func optHealthMaxLogSize() SchemaOption {
 		PodmanKey:       "--health-max-log-size",
 		Description:     "Maximum length in characters of stored healthcheck log. Default: 500 characters. 0 means unlimited.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -886,7 +912,7 @@ func optHealthMaxLogCount() SchemaOption {
 		PodmanKey:       "--health-max-log-count",
 		Description:     "Maximum number of attempts in healthcheck log file. Default: 5 attempts. 0 means unlimited.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -898,7 +924,7 @@ func optHealthLogDestination() SchemaOption {
 		PodmanKey:       "--health-log-destination",
 		Description:     "Destination for healthcheck logs: 'local' (default, overlay), 'directory' (custom path), or 'events_logger'.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values: []OptionValue{
 			{Value: "local", Description: "Store in overlay containers (default)"},
@@ -925,7 +951,7 @@ func optEntrypoint() SchemaOption {
 		PodmanKey:       "--entrypoint",
 		Description:     "Override the default ENTRYPOINT from the image. Specify multi-option commands as JSON string.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -949,7 +975,7 @@ func optStopSignal() SchemaOption {
 		PodmanKey:       "--stop-signal",
 		Description:     "Signal to send to stop the container. Valid signals: SIGTERM, SIGKILL, SIGINT, SIGHUP, SIGQUIT, SIGABRT, SIGALRM, SIGUSR1, SIGUSR2, SIGCHLD, SIGCONT, SIGSTOP.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          KnownValueSets["signal"],
 	}
@@ -961,7 +987,7 @@ func optStopTimeout() SchemaOption {
 		PodmanKey:       "--stop-timeout",
 		Description:     "Timeout in seconds for stop operation before killing.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -1062,7 +1088,7 @@ func optPodOption() SchemaOption {
 		PodmanKey:       "--pod",
 		Description:     "Link container to a Quadlet .pod unit. Value must be <name>.pod format. The .pod unit must exist.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -1094,13 +1120,14 @@ func optExposeHostPort() SchemaOption {
 	}
 }
 
+// ToDo: Only set podman cli value if quadlet value is true. Omit if false.
 func optHttpProxy() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "HttpProxy",
 		PodmanKey:       "--http-proxy",
 		Description:     "Pass proxy environment variables to container. Default: true. Set to false if host needs proxy but container doesn't.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--http-proxy={{.Value}}",
+		PodmanTemplate:  "--http-proxy",
 		AllowMultiple:   false,
 		Values: []OptionValue{
 			{Value: "true", Description: "Pass proxy variables"},
@@ -1115,7 +1142,7 @@ func optRetry() SchemaOption {
 		PodmanKey:       "--retry",
 		Description:     "Number of times to retry pulling image in case of failure. Default: 3.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -1127,7 +1154,7 @@ func optRetryDelay() SchemaOption {
 		PodmanKey:       "--retry-delay",
 		Description:     "Duration of delay between retry attempts when pulling images. Default: starts at 2s and exponentially backs off unless set.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -1163,7 +1190,7 @@ func optSysctl() SchemaOption {
 		PodmanKey:       "--sysctl",
 		Description:     "Configure namespaced kernel parameters. Value is formatted as: name=value. e.g. net.ipv6.conf.all.disable_ipv6=1. For IPC: kernel.msgmax, kernel.shm*, etc. For network: net.* options.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -1199,7 +1226,7 @@ func optContainersConfModule() SchemaOption {
 		PodmanKey:       "--module",
 		Description:     "Load a containers.conf module. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 	}
@@ -1235,7 +1262,7 @@ func optSecret() SchemaOption {
 		PodmanKey:       "--secret",
 		Description:     "Give container access to a secret. Format: secret-name[,opt=opt ...]. Options: type=mount|env, target=target, uid=0, gid=0, mode=0. Can be specified multiple times.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values: []OptionValue{
 			{Value: "type=mount", Description: "Mount secret as file (default)"},
@@ -1300,7 +1327,7 @@ func optDNS() SchemaOption {
 		PodmanKey:       "--dns",
 		Description:     "Set custom DNS servers for the container. Can be specified multiple times to add multiple DNS servers. Use 'none' to disable /etc/resolv.conf creation.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "{{.Key}} {{.Value}}",
 		AllowMultiple:   true,
 		Values:          []OptionValue{},
 		// Note: validator will be populated at runtime for IP addresses or special value 'none'

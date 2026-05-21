@@ -659,7 +659,7 @@ func runCommands(commands []Command) {
 		for _, c := range commands {
 			if len(c.Warnings) > 0 {
 				if !isHeaderPrinted {
-					fmt.Println("\n# --- WARNINGS ---\n")
+					fmt.Printf("\n# --- WARNINGS ---\n\n")
 					isHeaderPrinted = true
 				}
 				for _, w := range c.Warnings {
@@ -669,7 +669,7 @@ func runCommands(commands []Command) {
 		}
 	}
 	if isPrintOnly && len(commands) > 0 {
-		fmt.Println("\n# --- DRY-RUN MODE: Commands that would be executed ---\n")
+		fmt.Printf("\n# --- DRY-RUN MODE: Commands that would be executed ---\n\n")
 		for _, c := range commands {
 			if len(c.Cmd) > 0 {
 				fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
@@ -1877,21 +1877,13 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 					case "PodmanArgs": // Handled above
 						continue
 					default:
-						var buf bytes.Buffer
-						if opt, ok := options[k]; ok {
-							option := Option{Key: opt.PodmanKey, Value: v}
-							err := opt.PodmanTemplateParsed.Execute(&buf, option)
-							if err != nil {
-								warnings = append(warnings, fmt.Sprintf("Error formatting volume option %s: %v", k, err))
-								continue
-							}
-							formatted := buf.String()
-							// Use Fields to parse space-separated flags
-							cmd = append(cmd, parseFields(formatted)...)
-
-						} else {
-							warnings = append(warnings, fmt.Sprintf("Quadlet volume option not defined: %s", k))
+						podmanOpt, err := quadletOptionToPodman("volume", options, k, v)
+						if err != nil {
+							warnings = append(warnings, err.Error())
+							continue
 						}
+						// Use Fields to parse space-separated flags
+						cmd = append(cmd, parseFields(podmanOpt)...)
 					}
 				}
 			}
@@ -1919,20 +1911,13 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 						continue // NetworkDeleteOnStop is for systemd and does not affect Podman CLI
 					case "PodmanArgs": // Handled above
 					default:
-						var buf bytes.Buffer
-						if opt, ok := options[k]; ok {
-							option := Option{Key: opt.PodmanKey, Value: v}
-							err := opt.PodmanTemplateParsed.Execute(&buf, option)
-							if err != nil {
-								warnings = append(warnings, fmt.Sprintf("Error formatting network option %s: %v", k, err))
-								continue
-							}
-							formatted := buf.String()
-							// Use Fields to parse space-separated flags
-							cmd = append(cmd, parseFields(formatted)...)
-						} else {
-							warnings = append(warnings, fmt.Sprintf("Quadlet network option not defined: %s", k))
+						podmanOpt, err := quadletOptionToPodman("network", options, k, v)
+						if err != nil {
+							warnings = append(warnings, err.Error())
+							continue
 						}
+						// Use Fields to parse space-separated flags
+						cmd = append(cmd, parseFields(podmanOpt)...)
 					}
 				}
 			}
@@ -1957,20 +1942,13 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 						continue // ServiceName is for systemd and does not affect Podman CLI
 					case "PodmanArgs": // Handled above
 					default:
-						buf := bytes.Buffer{}
-						if opt, ok := options[k]; ok {
-							option := Option{Key: opt.PodmanKey, Value: v}
-							err := opt.PodmanTemplateParsed.Execute(&buf, option)
-							if err != nil {
-								warnings = append(warnings, fmt.Sprintf("Error formatting pod option %s: %v", k, err))
-								continue
-							}
-							formatted := buf.String()
-							// Use Fields to parse space-separated flags
-							cmd = append(cmd, parseFields(formatted)...)
-						} else {
-							warnings = append(warnings, fmt.Sprintf("Quadlet pod option not defined: %s", k))
+						podmanOpt, err := quadletOptionToPodman("pod", options, k, v)
+						if err != nil {
+							warnings = append(warnings, err.Error())
+							continue
 						}
+						// Use Fields to parse space-separated flags
+						cmd = append(cmd, parseFields(podmanOpt)...)
 					}
 				}
 			}
@@ -2055,21 +2033,17 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 						cmd = append(cmd, "--network", strings.TrimSuffix(v, ".network"))
 					case "PodmanArgs": // Handled above
 					default:
-						var buf bytes.Buffer
-
 						if k == "Pod" {
 							v = strings.TrimSuffix(v, ".pod")
 						}
 
-						option := Option{Key: opt.PodmanKey, Value: v}
-						err := opt.PodmanTemplateParsed.Execute(&buf, option)
+						podmanOpt, err := quadletOptionToPodman("container", options, k, v)
 						if err != nil {
-							warnings = append(warnings, fmt.Sprintf("Error formatting container option %s: %v", k, err))
+							warnings = append(warnings, err.Error())
 							continue
 						}
-						formatted := buf.String()
 						// Use Fields to parse space-separated flags
-						cmd = append(cmd, parseFields(formatted)...)
+						cmd = append(cmd, parseFields(podmanOpt)...)
 					}
 				}
 			}
@@ -2085,6 +2059,19 @@ func generateCreateCommand(q *Quadlet) ([]string, []string) {
 		}
 	}
 	return cmd, warnings
+}
+
+func quadletOptionToPodman(qType string, options map[string]SchemaOption, k string, v string) (string, error) {
+	var buf bytes.Buffer
+	if opt, ok := options[k]; ok {
+		option := Option{Key: opt.PodmanKey, Value: v}
+		err := opt.PodmanTemplateParsed.Execute(&buf, option)
+		if err != nil {
+			return "", fmt.Errorf("Error formatting %s option %s: %w", qType, k, err)
+		}
+		return buf.String(), nil
+	}
+	return "", fmt.Errorf("Quadlet %s option not defined: %s", qType, k)
 }
 
 // parseFields splits a space-separated string into a slice,

@@ -50,7 +50,7 @@ func optVolumeDriver() SchemaOption {
 		PodmanKey:       "--driver",
 		Description:     "Specify the volume driver name (default local). There are two drivers supported by Podman itself: local and image.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "--driver={{.Value}}",
 		AllowMultiple:   false,
 		Values: []OptionValue{
 			{Value: "local", Description: "Use a directory on the host's disk as the backend."},
@@ -89,10 +89,10 @@ func optDevice() SchemaOption {
 func optType() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "Type",
-		PodmanKey:       "volume-type",
-		Description:     "The filesystem type of Device (used with mount command -t option). There is no equivalent podman option.",
+		PodmanKey:       "--opt type=",
+		Description:     "The filesystem type of Device (used with mount command -t option).",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "",
+		PodmanTemplate:  "--opt type={{.Value}}",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
@@ -149,10 +149,10 @@ func optVolumeLabel() SchemaOption {
 func optOptions() SchemaOption {
 	return SchemaOption{
 		QuadletKey:      "Options",
-		PodmanKey:       "--opt",
+		PodmanKey:       "--opt o",
 		Description:     "Set driver specific options. For the default driver, local, this allows a volume to be configured to mount a filesystem on the host. For the local driver the following options are supported: type, device, o, and [no]copy. For the image driver, the only supported option is image, which specifies the image the volume is based on. This option is mandatory when using the image driver.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
-		PodmanTemplate:  "--opt o={{.Value}}",
+		PodmanTemplate:  "{{.Key}}={{.Value}}",
 		AllowMultiple:   false,
 		Values: []OptionValue{
 			{Value: "type=<filesystem_type>", Description: "The filesystem type of the device (used with mount command -t option)."},
