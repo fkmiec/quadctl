@@ -1,4 +1,4 @@
-package main
+package util
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestVolumeQuadletOptionsToPodmanTableDriven(t *testing.T) {
-	quadletSchemas = map[string]map[string]SchemaOption{}
+	quadletSchemas := map[string]map[string]SchemaOption{}
 	quadletSchemas["volume"] = GetQuadletOptionsMap("volume")
 	quadletSchemas["network"] = GetQuadletOptionsMap("network")
 	quadletSchemas["container"] = GetQuadletOptionsMap("container")
@@ -42,7 +42,7 @@ func TestVolumeQuadletOptionsToPodmanTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		quadletOpt := fmt.Sprintf("%s=%s", tt.key, tt.value)
 		t.Run(quadletOpt, func(t *testing.T) {
-			ans, err := quadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
+			ans, err := QuadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
 			if err != nil {
 				t.Errorf("got %s, want %s", ans, tt.want)
 			}
@@ -54,7 +54,7 @@ func TestVolumeQuadletOptionsToPodmanTableDriven(t *testing.T) {
 }
 
 func TestNetworkQuadletOptionsToPodmanTableDriven(t *testing.T) {
-	quadletSchemas = map[string]map[string]SchemaOption{}
+	quadletSchemas := map[string]map[string]SchemaOption{}
 	quadletSchemas["volume"] = GetQuadletOptionsMap("volume")
 	quadletSchemas["network"] = GetQuadletOptionsMap("network")
 	quadletSchemas["container"] = GetQuadletOptionsMap("container")
@@ -91,7 +91,7 @@ func TestNetworkQuadletOptionsToPodmanTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		quadletOpt := fmt.Sprintf("%s=%s", tt.key, tt.value)
 		t.Run(quadletOpt, func(t *testing.T) {
-			ans, err := quadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
+			ans, err := QuadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
 			if err != nil {
 				t.Errorf("got %s, want %s", ans, tt.want)
 			}
@@ -103,7 +103,7 @@ func TestNetworkQuadletOptionsToPodmanTableDriven(t *testing.T) {
 }
 
 func TestPodQuadletOptionsToPodmanTableDriven(t *testing.T) {
-	quadletSchemas = map[string]map[string]SchemaOption{}
+	quadletSchemas := map[string]map[string]SchemaOption{}
 	quadletSchemas["volume"] = GetQuadletOptionsMap("volume")
 	quadletSchemas["network"] = GetQuadletOptionsMap("network")
 	quadletSchemas["container"] = GetQuadletOptionsMap("container")
@@ -147,7 +147,7 @@ func TestPodQuadletOptionsToPodmanTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		quadletOpt := fmt.Sprintf("%s=%s", tt.key, tt.value)
 		t.Run(quadletOpt, func(t *testing.T) {
-			ans, err := quadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
+			ans, err := QuadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
 			if err != nil {
 				t.Errorf("got %s, want %s", ans, tt.want)
 			}
@@ -159,7 +159,7 @@ func TestPodQuadletOptionsToPodmanTableDriven(t *testing.T) {
 }
 
 func TestContainerQuadletOptionsToPodmanTableDriven(t *testing.T) {
-	quadletSchemas = map[string]map[string]SchemaOption{}
+	quadletSchemas := map[string]map[string]SchemaOption{}
 	quadletSchemas["volume"] = GetQuadletOptionsMap("volume")
 	quadletSchemas["network"] = GetQuadletOptionsMap("network")
 	quadletSchemas["container"] = GetQuadletOptionsMap("container")
@@ -278,7 +278,7 @@ func TestContainerQuadletOptionsToPodmanTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		quadletOpt := fmt.Sprintf("%s=%s", tt.key, tt.value)
 		t.Run(quadletOpt, func(t *testing.T) {
-			ans, err := quadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
+			ans, err := QuadletOptionToPodman(tt.qType, tt.options, tt.key, tt.value)
 			if err != nil {
 				t.Errorf("got %s, want %s", ans, tt.want)
 			}
