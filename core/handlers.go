@@ -870,10 +870,16 @@ func HandleList(quadctl *util.Quadctl) error {
 	// Verify the path exists and is a directory
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat path: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("provided path is not a directory")
+		//try to create the directory
+		if err = os.MkdirAll(absPath, 0660); err != nil {
+			fmt.Printf("Error: Failed to stat configured quadlet.src.path: %v", err)
+			os.Exit(1)
+		}
+	} else {
+		if !info.IsDir() {
+			fmt.Printf("Error: Configured quadlet.src.path is not a directory: %s\n", absPath)
+			os.Exit(1)
+		}
 	}
 
 	lw := list.NewWriter()

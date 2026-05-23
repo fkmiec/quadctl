@@ -308,7 +308,7 @@ func getSearchDir(quadctl *Quadctl, path string) string {
 		fmt.Fprintf(os.Stderr, "Error getting CWD: %v\n", err)
 		os.Exit(1)
 	}
-	// If a path is specified, determine if relative to CWD or quadlets_path
+	// If a path is specified, determine if relative to CWD or quadlet.src.path
 	//if flag.NArg() > 1 {
 	if path != "" {
 		// If os.Stat returns no error, the path is absolute or valid relative to the current working directory
