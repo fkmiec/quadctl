@@ -96,6 +96,8 @@ func InitFlags(quadctl *Quadctl) {
 	statusFlags := flag.NewFlagSet("status", flag.ExitOnError)
 	statusFlags.BoolVar(&quadctl.IsFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
 	statusFlags.BoolVar(&quadctl.IsFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
+	statusFlags.BoolVar(&quadctl.IsPrintOnly, "print", false, "Print podman commands without executing")
+	statusFlags.BoolVar(&quadctl.IsPrintOnly, "p", false, "Print podman commands without executing")
 	statusFlags.Usage = PrintStatusUsage
 	flagSets["status"] = statusFlags
 
@@ -128,6 +130,8 @@ func InitFlags(quadctl *Quadctl) {
 
 	// logs
 	logsFlags := flag.NewFlagSet("logs", flag.ExitOnError)
+	logsFlags.BoolVar(&quadctl.IsPrintOnly, "print", false, "Print podman commands without executing")
+	logsFlags.BoolVar(&quadctl.IsPrintOnly, "p", false, "Print podman commands without executing")
 	logsFlags.Usage = PrintLogsUsage
 	flagSets["logs"] = logsFlags
 

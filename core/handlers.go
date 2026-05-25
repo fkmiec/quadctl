@@ -244,14 +244,16 @@ func HandleSystemdStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comma
 	// Start the systemd services
 	var buf bytes.Buffer
 	data := map[string]string{}
-	if quadctl.IsRootful {
+	if !quadctl.IsRootful {
 		data["user"] = "--user"
 	}
+
 	err := quadctl.SystemdStartTmpl.Execute(&buf, data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error executing systemd start template: %v\n", err)
 		os.Exit(1)
 	}
+
 	// Only start the pod and any loose containers
 	for _, q := range quadlets {
 		if q.Type == ".container" && q.ParentPod == "" || q.Type == ".pod" {
@@ -323,14 +325,17 @@ func HandleSystemdStatus(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 		fmt.Fprintf(os.Stderr, "Error executing systemd status template: %v\n", err)
 		os.Exit(1)
 	}
-
 	args := util.ParseFields(buf.String())
 	for _, q := range quadlets {
 		args = append(args, q.ServiceName)
 	}
-	c := NewCommand("Getting systemd status")
-	c.Cmd = args
-	commands = append(commands, c)
+	if quadctl.IsPrintOnly {
+		c := NewCommand("Getting systemd status")
+		c.Cmd = args
+		commands = append(commands, c)
+	} else {
+		runCommand(args)
+	}
 	return commands
 }
 
@@ -348,10 +353,15 @@ func HandleSystemdLogs(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comman
 		fmt.Fprintf(os.Stderr, "Error executing systemd logs: %v\n", err)
 		os.Exit(1)
 	}
+
 	cmd := util.ParseFields(buf.String())
-	c := NewCommand("Opening systemd logs")
-	c.Cmd = cmd
-	commands = append(commands, c)
+	if quadctl.IsPrintOnly {
+		c := NewCommand("Opening systemd logs")
+		c.Cmd = cmd
+		commands = append(commands, c)
+	} else {
+		runCommand(cmd)
+	}
 	return commands
 }
 
@@ -387,7 +397,7 @@ func HandleRemove(quadlets []*util.Quadlet) []Command {
 	return commands
 }
 
-func HandlePull(quadctl *util.Quadctl, quadlets []*util.Quadlet) {
+func HandlePull(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	commands := []Command{}
 
@@ -409,7 +419,8 @@ func HandlePull(quadctl *util.Quadctl, quadlets []*util.Quadlet) {
 		commands = append(commands, c)
 	}
 
-	RunCommands(quadctl, commands)
+	return commands
+	//RunCommands(quadctl, commands)
 }
 
 func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {

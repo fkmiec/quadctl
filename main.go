@@ -35,13 +35,13 @@ func main() {
 		HandleStats(quadlets)
 	case "status":
 		if quadctl.IsSystemd {
-			HandleSystemdStatus(quadctl, quadlets)
+			commands = HandleSystemdStatus(quadctl, quadlets)
 		} else {
 			HandlePS(quadctl, quadlets)
 		}
 	case "logs":
 		if quadctl.IsSystemd {
-			HandleSystemdLogs(quadctl, quadlets)
+			commands = HandleSystemdLogs(quadctl, quadlets)
 		} else {
 			fmt.Println("To view podman logs, use 'podman logs <container name or id>'")
 			os.Exit(0)
@@ -49,7 +49,7 @@ func main() {
 	case "images":
 		HandleImages(quadlets)
 	case "pull":
-		HandlePull(quadctl, quadlets)
+		commands = HandlePull(quadctl, quadlets)
 	case "list", "ls":
 		HandleList(quadctl)
 	case "create":
