@@ -514,9 +514,10 @@ func ParseFields(input string) []string {
 	//Quote any unquoted (previously quoted) strings with spaces
 	for i, f := range fields {
 		if strings.Contains(f, " ") {
-			fields[i] = fmt.Sprintf("\"%s\"", f)
+			fields[i] = fmt.Sprintf("%q", f)
 		}
 	}
+
 	return fields
 }
 

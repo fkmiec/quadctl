@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/fkmiec/quadctl/util"
 )
 
 type Command struct {
@@ -54,16 +56,28 @@ func DefaultPreFn(c *Command) {
 
 func DefaultRunFn(c *Command) {
 	if len(c.Cmd) > 0 {
+
+		// Remove quotes added due to spaces. exec.Command will escape the arg ... but dry run will need it quoted for use in shell
+		for i, arg := range c.Cmd {
+			if strings.Contains(arg, "\"") {
+				//Debug
+				//fmt.Printf("Found arg with quotes: %s\n", arg)
+				c.Cmd[i] = strings.ReplaceAll(arg, "\"", "") //fmt.Sprintf("%q", arg)
+			}
+		}
+
 		cmd := exec.Command(c.Cmd[0], c.Cmd[1:]...)
 		if slices.Contains(c.Cmd, "run") && (!slices.Contains(c.Cmd, "-d") || !slices.Contains(c.Cmd, "--detach")) {
+			fmt.Printf("Running in foreground: %s\n", strings.Join(c.Cmd, " "))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Stdin = os.Stdin
-			cmd.Run()
+			c.Error = cmd.Run()
 		} else {
 			output, err := cmd.CombinedOutput()
 			c.Output = []string{string(output)}
 			c.Error = err
+
 		}
 	}
 }
@@ -74,6 +88,53 @@ func DefaultPostFn(c *Command) {
 	}
 	c.Spinner.FinalMSG = fmt.Sprintf("%s... Done\n", c.Label)
 	c.Spinner.Stop()
+}
+
+// Common handling for dry run / verbose output and command execution for all handlers that generate commands.
+func RunCommands(quadctl *util.Quadctl, commands []Command) {
+
+	if quadctl.IsVerbose {
+		isHeaderPrinted := false
+		for _, c := range commands {
+			if len(c.Warnings) > 0 {
+				if !isHeaderPrinted {
+					fmt.Printf("\n# --- WARNINGS ---\n\n")
+					isHeaderPrinted = true
+				}
+				for _, w := range c.Warnings {
+					fmt.Printf("[WARN] %s\n", w)
+				}
+			}
+		}
+	}
+	if quadctl.IsPrintOnly && len(commands) > 0 {
+		fmt.Printf("\n# --- DRY-RUN MODE: Commands that would be executed ---\n\n")
+		for _, c := range commands {
+			if len(c.Cmd) > 0 {
+				fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
+			} else {
+				fmt.Printf("  %s\n", c.Label)
+				for _, line := range c.Output {
+					fmt.Println("   => " + line)
+				}
+			}
+		}
+	} else if len(commands) > 0 {
+		for _, c := range commands {
+			c.PreCmd()
+			c.RunCmd()
+			c.PostCmd()
+
+			if c.Output != nil {
+				for _, o := range c.Output {
+					fmt.Fprintf(os.Stdout, "%s\n", o)
+				}
+			}
+			if c.Error != nil {
+				fmt.Fprintf(os.Stderr, "Error executing command:\n\n  %s\n\n%s\n", strings.Join(c.Cmd, " "), c.Error.Error())
+			}
+		}
+	}
 }
 
 func runCommand(args []string) error {

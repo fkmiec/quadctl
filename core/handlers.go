@@ -61,47 +61,6 @@ func HandleCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	return commands
 }
 
-// Common handling for dry run / verbose output and command execution for all handlers that generate commands.
-func RunCommands(quadctl *util.Quadctl, commands []Command) {
-
-	if quadctl.IsVerbose {
-		isHeaderPrinted := false
-		for _, c := range commands {
-			if len(c.Warnings) > 0 {
-				if !isHeaderPrinted {
-					fmt.Printf("\n# --- WARNINGS ---\n\n")
-					isHeaderPrinted = true
-				}
-				for _, w := range c.Warnings {
-					fmt.Printf("[WARN] %s\n", w)
-				}
-			}
-		}
-	}
-	if quadctl.IsPrintOnly && len(commands) > 0 {
-		fmt.Printf("\n# --- DRY-RUN MODE: Commands that would be executed ---\n\n")
-		for _, c := range commands {
-			if len(c.Cmd) > 0 {
-				fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
-			} else {
-				fmt.Printf("  %s\n", c.Label)
-				for _, line := range c.Output {
-					fmt.Println("   => " + line)
-				}
-			}
-		}
-	} else if len(commands) > 0 {
-		for _, c := range commands {
-			c.PreCmd()
-			c.RunCmd()
-			c.PostCmd()
-			if c.Error != nil && quadctl.IsVerbose {
-				fmt.Fprintf(os.Stderr, "Error executing command:\n\n  %s\n\n  %s\n", strings.Join(c.Cmd, " "), c.Output)
-			}
-		}
-	}
-}
-
 // Call handleCreate. Then start.
 func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
@@ -150,7 +109,7 @@ func HandleRun(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	commands := []Command{}
 
-	//Create, if necessary
+	//Create non-container resources, if necessary (HandleCreate will skip .container quadlets for the 'run' command, but create volumes, networks, pods if needed)
 	c := HandleCreate(quadctl, quadlets)
 	commands = append(commands, c...)
 
