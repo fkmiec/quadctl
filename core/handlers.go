@@ -197,8 +197,8 @@ func HandleSystemdStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comma
 	}
 
 	// Reload quadlet definitions
-	cmd := HandleSystemdReload(quadctl)
-	commands = append(commands, cmd...)
+	//cmd := HandleSystemdReload(quadctl)
+	//commands = append(commands, cmd...)
 
 	// Start the systemd services
 	var buf bytes.Buffer
@@ -727,12 +727,17 @@ func HandlePS(quadctl *util.Quadctl, quadlets []*util.Quadlet) {
 	t.Render()
 }
 
-func HandleStats(quadlets []*util.Quadlet) {
+func HandleStats(quadctl *util.Quadctl, quadlets []*util.Quadlet) {
 
 	psInfo, err := getContainerPS(quadlets)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
+	}
+
+	if len(psInfo) < 1 {
+		fmt.Printf("Error: Found no containers running or created that are related to quadlets in directory: %s\n", quadctl.SearchDir)
+		os.Exit(1)
 	}
 
 	//cmd := []string{"podman", "stats", "--no-stream"}
@@ -749,7 +754,7 @@ func HandleStats(quadlets []*util.Quadlet) {
 func HandleImages(quadlets []*util.Quadlet) {
 
 	//REPOSITORY                                 TAG         IMAGE ID      CREATED       SIZE
-	cmd := []string{"podman", "images", "--noheading", "--filter", "reference=ADD_ID_HERE", "--format", "{{.Repository}},{{.Tag}},{{.ID}},{{.Created}},{{.Size}}"}
+	cmd := []string{"podman", "images", "--noheading", "--filter", "reference=ADD_ID_HERE", "--format", "{{.Repository}}|{{.Tag}}|{{.ID}}|{{.Created}}|{{.Size}}"}
 	imageInfo := [][]string{}
 
 	// Fetch image info for each container
@@ -758,6 +763,7 @@ func HandleImages(quadlets []*util.Quadlet) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
+
 	if len(psInfo) > 0 {
 		for _, info := range psInfo {
 			name := strings.TrimSpace(info[5]) // IMAGE ID from ps output
@@ -772,9 +778,13 @@ func HandleImages(quadlets []*util.Quadlet) {
 			}
 			lines := strings.Split(output, "\n")
 			for _, line := range lines {
-				parts := strings.Split(line, ",")
+				parts := strings.Split(line, "|")
 				if len(parts) >= 5 {
 					imageInfo = append(imageInfo, parts)
+				} else {
+					// Typically an empty newline
+					//fmt.Printf("Warning: Unexpected output from podman ps. Expected 5 or more values. Got: %s\n", line)
+					continue
 				}
 			}
 		}
@@ -798,7 +808,7 @@ func HandleImages(quadlets []*util.Quadlet) {
 						}
 						lines := strings.Split(output, "\n")
 						for _, line := range lines {
-							parts := strings.Split(line, ",")
+							parts := strings.Split(line, "|")
 							if len(parts) >= 5 {
 								imageInfo = append(imageInfo, parts)
 							}
@@ -860,7 +870,7 @@ func HandleList(quadctl *util.Quadctl) error {
 
 	// Start recursive rendering (root is level 1, its children are level 2)
 	lw.Indent()
-	err = appendDirItems(lw, absPath, 2)
+	err = appendDirItems(lw, absPath, 2, quadctl.ListDepth)
 	if err != nil {
 		return err
 	}
@@ -872,7 +882,7 @@ func HandleList(quadctl *util.Quadctl) error {
 }
 
 // appendDirItems recursively traverses the directory and adds items to the list writer.
-func appendDirItems(lw list.Writer, currentPath string, level int) error {
+func appendDirItems(lw list.Writer, currentPath string, level int, depth int) error {
 	entries, err := os.ReadDir(currentPath)
 	if err != nil {
 		return err
@@ -884,9 +894,9 @@ func appendDirItems(lw list.Writer, currentPath string, level int) error {
 
 		// Nest deeper if it's a directory
 		lw.Indent()
-		if entry.IsDir() {
+		if entry.IsDir() && depth > level {
 			nextPath := filepath.Join(currentPath, entry.Name())
-			if err := appendDirItems(lw, nextPath, level+1); err != nil {
+			if err := appendDirItems(lw, nextPath, level+1, depth); err != nil {
 				return err
 			}
 		}
@@ -1234,7 +1244,7 @@ CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES
 podman ps -a --format "{{.ID}},{{.Names}},{{.PodName}},{{.State}},{{.Ports}},{{.Image}},{{.Created}}"
 */
 func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
-	cmd := []string{"podman", "ps", "-a", "--format", "{{.ID}},{{.Names}},{{.PodName}},{{.Status}},{{.Ports}},{{.Image}},{{.Created}}"}
+	cmd := []string{"podman", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.PodName}}|{{.Status}}|{{.Ports}}|{{.Image}}|{{.Created}}"}
 	output, err := runCommandCapture(cmd)
 	if err != nil {
 		return nil, err
@@ -1243,7 +1253,7 @@ func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
 	lines := strings.Split(output, "\n")
 	var psInfo [][]string
 	for _, line := range lines {
-		parts := strings.Split(line, ",")
+		parts := strings.Split(line, "|")
 		if len(parts) < 7 {
 			continue
 		}

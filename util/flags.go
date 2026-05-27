@@ -124,6 +124,8 @@ func InitFlags(quadctl *Quadctl) {
 
 	// list, ls
 	listFlags := flag.NewFlagSet("list", flag.ExitOnError)
+	listFlags.IntVar(&quadctl.ListDepth, "depth", 2, "Specify the depth of the quadlet directory listing.")
+	listFlags.IntVar(&quadctl.ListDepth, "d", 2, "Specify the depth of the quadlet directory listing.")
 	listFlags.Usage = PrintListUsage
 	flagSets["list"] = listFlags
 	flagSets["ls"] = listFlags
@@ -285,6 +287,7 @@ func PrintListUsage() {
 	fmt.Fprintf(os.Stderr, "  'quadctl list' will display quadlets under your configured quadlet.src.path.\n")
 	fmt.Fprintf(os.Stderr, "  'quadctl -s list' will display quadlets under your configured quadlet.user.path.\n")
 	fmt.Fprintf(os.Stderr, "  'sudo quadctl -s list' will display quadlets under your configured quadlet.root.path.\n")
+	fmt.Fprintf(os.Stderr, "  At default depth only quadlet directories are listed. Add -d [3+] to list files.\n")
 }
 
 func PrintLogsUsage() {

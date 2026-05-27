@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"slices"
 
 	. "github.com/fkmiec/quadctl/core"
 	. "github.com/fkmiec/quadctl/schema"
@@ -25,6 +26,13 @@ func main() {
 
 	quadlets := util.InitQuadlets(quadctl)
 
+	// If no quadlets at this point, only list|ls is still a valid command.
+	// Abort with a message. User probably didn't notice they were neither in a quadlet directory nor specified one as argument.
+	if len(quadlets) < 1 && !(slices.Contains([]string{"list", "ls", "logs"}, quadctl.Subcommand)) {
+		fmt.Printf("Error: No quadlets found in directory: %s\n", quadctl.SearchDir)
+		os.Exit(1)
+	}
+
 	var commands []Command
 
 	// Route to appropriate subcommand handler
@@ -32,7 +40,7 @@ func main() {
 	case "ps":
 		HandlePS(quadctl, quadlets)
 	case "stats":
-		HandleStats(quadlets)
+		HandleStats(quadctl, quadlets)
 	case "status":
 		if quadctl.IsSystemd {
 			commands = HandleSystemdStatus(quadctl, quadlets)
@@ -103,6 +111,7 @@ func initState() {
 		IsPrintOnly:       false,
 		IsVerbose:         false,
 		IsFile:            false,
+		ListDepth:         2,
 		Subcommand:        "",
 		SearchDir:         "",
 		PodmanArgs:        "",

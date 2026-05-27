@@ -56,14 +56,12 @@ func DefaultPreFn(c *Command) {
 
 func DefaultRunFn(c *Command) {
 	if len(c.Cmd) > 0 {
-
-		// Remove quotes added due to spaces. exec.Command will escape the arg ... but dry run will need it quoted for use in shell
+		//  If user quoted some value becuase it contained spaces, parser.ParseFields() retains quotes regardless of how often called.
+		//  They will interfere with execution, so we remove them. The exec.Command call will quote any arg that contains spaces.
+		//  In practice this means KEY="some val with spaces" will be stripped and requoted by exec.Command as "KEY=some val with spaces",
+		//  which works fine.
 		for i, arg := range c.Cmd {
-			if strings.Contains(arg, "\"") {
-				//Debug
-				//fmt.Printf("Found arg with quotes: %s\n", arg)
-				c.Cmd[i] = strings.ReplaceAll(arg, "\"", "") //fmt.Sprintf("%q", arg)
-			}
+			c.Cmd[i] = strings.ReplaceAll(arg, "\"", "")
 		}
 
 		cmd := exec.Command(c.Cmd[0], c.Cmd[1:]...)
@@ -102,16 +100,16 @@ func RunCommands(quadctl *util.Quadctl, commands []Command) {
 					isHeaderPrinted = true
 				}
 				for _, w := range c.Warnings {
-					fmt.Printf("[WARN] %s\n", w)
+					fmt.Printf(" => %s\n", w)
 				}
 			}
 		}
 	}
 	if quadctl.IsPrintOnly && len(commands) > 0 {
-		fmt.Printf("\n# --- DRY-RUN MODE: Commands that would be executed ---\n\n")
+		fmt.Printf("\n# --- Print MODE: Commands that would be executed ---\n\n")
 		for _, c := range commands {
 			if len(c.Cmd) > 0 {
-				fmt.Printf("  %s\n", strings.Join(c.Cmd, " "))
+				fmt.Println(strings.Join(c.Cmd, " "))
 			} else {
 				fmt.Printf("  %s\n", c.Label)
 				for _, line := range c.Output {

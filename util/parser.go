@@ -31,6 +31,7 @@ type Quadctl struct {
 	IsPrintOnly       bool
 	IsVerbose         bool
 	IsFile            bool
+	ListDepth         int
 	Subcommand        string
 	SearchDir         string
 	PodmanArgs        string
@@ -109,6 +110,7 @@ func InitQuadlets(quadctl *Quadctl) []*Quadlet {
 		fmt.Fprintf(os.Stderr, "Error determining ordering: %v\n", err)
 		os.Exit(1)
 	}
+
 	return ordered
 }
 
@@ -491,6 +493,8 @@ func ParseFields(input string) []string {
 			inQuotes = !inQuotes
 			// We skip writing the quote character to the builder.
 			// This automatically strips out the quotes while keeping the contents.
+			// TEMPORARY - see if writing the quotes back is the way to go
+			currentToken.WriteRune(r)
 		case ' ':
 			if inQuotes {
 				currentToken.WriteRune(r)
@@ -511,12 +515,14 @@ func ParseFields(input string) []string {
 		fields = append(fields, currentToken.String())
 	}
 
-	//Quote any unquoted (previously quoted) strings with spaces
-	for i, f := range fields {
-		if strings.Contains(f, " ") {
-			fields[i] = fmt.Sprintf("%q", f)
+	/*
+		//Quote any unquoted (previously quoted) strings with spaces
+		for i, f := range fields {
+			if strings.Contains(f, " ") {
+				fields[i] = fmt.Sprintf("%q", f)
+			}
 		}
-	}
+	*/
 
 	return fields
 }
