@@ -1,6 +1,6 @@
 module github.com/fkmiec/quadctl
 
-go 1.26.1
+go 1.26
 
 require github.com/jedib0t/go-pretty/v6 v6.7.8
 
