@@ -4,11 +4,15 @@ A compose-like command-line tool to run Podman Quadlets locally without systemd 
 
 ## Why?
 
-Podman Quadlets use systemd to orchestrate and manage containers in the same way it does for all other services on modern Linux machines. That is an attractive proposition if you don't need the complex multi-server clustering features of, for example, kubernetes, or if you want to run rootless and daemonless podman containers with robust monitoring and management while adding as little overhead as possible (looking at you, homelabbers). You might also prefer the simple .ini file format over .yaml :)
+Podman Quadlets use systemd to orchestrate and manage containers in the same way it does for all other services on modern Linux machines. That is an attractive proposition if you don't need the complex multi-server clustering features of, for example, kubernetes. You might also prefer the simple .ini file format over .yaml :)
 
 However, if you're coming from docker compose, quadlets look complex. Multiple files need to be deployed to one or two (out of 10 possible) systemd quadlet generator directories and you have to get familiar with systemctl commands, daemon reloads, --user flag, journalctl, etc. To top it off, there is no way to run what you define in your quadlet files except for systemd, which causes many to treat quadlets as a late-stage 'production deployment' step if they don't give up entirely. Many have complained that they need a way to run "locally" for development before "deploying" to systemd.
 
 Quadctl aims to provide a simple and consistent CLI for running and managing quadlets with and without systemd. 
+
+## Demo
+
+![Alt Text](./demo.gif)
 
 ## Features
 
