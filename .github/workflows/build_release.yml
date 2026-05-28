@@ -26,7 +26,7 @@ jobs:
         run: |
           # Replace this with your actual build command
           mkdir -p dist
-          go build -o quadctl > dist/quadctl
+          go build -o dist/quadctl
 
       - name: Create and Upload Release
         uses: softprops/action-gh-release@v2
