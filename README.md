@@ -17,10 +17,10 @@ Quadctl aims to provide a simple and consistent CLI for running and managing qua
 ## Features
 
 * Unified command set for running directly or under systemd:
-  * Use `quadctl start` to create and start rootless containers directly under podman
-  * Use `sudo quadctl start` to create and start rootful containers directly under podman
-  * Use `quadctl -s start` to create and start rootless containers under systemd
-  * Use `sudo quadctl -s start` to create and start rootful containers under systemd
+  * Use `quadctl start` to create and start _**rootless**_ containers directly under **podman**
+  * Use `sudo quadctl start` to create and start _**rootful**_ containers directly under **podman**
+  * Use `quadctl -s start` to create and start _**rootless**_ containers under **systemd**
+  * Use `sudo quadctl -s start` to create and start _**rootful**_ containers under **systemd**
   * ... similarly for all other commands 
 * Quadlet dependency ordering handled by quadctl when run directly, or by systemd when -s flag provided.
 * Quadlet supports .container, .pod, .volume, .network and .quadlet (the currently proposed all-in-one .quadlet file format)
