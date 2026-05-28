@@ -111,9 +111,9 @@ func RunCommands(quadctl *util.Quadctl, commands []Command) {
 			if len(c.Cmd) > 0 {
 				fmt.Println(strings.Join(c.Cmd, " "))
 			} else {
-				fmt.Printf("  %s\n", c.Label)
+				fmt.Printf("%s\n", c.Label)
 				for _, line := range c.Output {
-					fmt.Println("   => " + line)
+					fmt.Println("  => " + line)
 				}
 			}
 		}
