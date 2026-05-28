@@ -1,0 +1,39 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tags starting with 'v', like v1.0.0
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create a release and upload assets
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up build environment
+        # Add steps here to install your compiler (e.g., actions/setup-go, actions/setup-node)
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+
+      - name: Build project
+        run: |
+          # Replace this with your actual build command
+          mkdir -p dist
+          go build -o quadctl > dist/quadctl
+
+      - name: Create and Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/quadctl
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
