@@ -50,8 +50,10 @@ Quadctl aims to provide a simple and consistent CLI for running and managing qua
 
 ## Installation
 
+The below command line downloads the latest release and attempts to install to /usr/local/bin. Alternatively, go to the latest release page and manually download the tar file and extract to your preferred $PATH location for the binary. 
+
 ```
-go install github.com/fkmiec/quadctl
+curl -sL github.com/fkmiec/quadctl/releases/latest/download/quadctl_linux_amd64.tar | sudo tar xv -C /usr/local/bin
 ```
 
 On first invocation, quadctl will install a default quadctl.ini config file to ~/.config/quadctl. It is recommended that you review and update the location configurations to match your desired workflow: 
