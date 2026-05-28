@@ -27,6 +27,8 @@ jobs:
           # Replace this with your actual build command
           mkdir -p dist
           go build -o dist/quadctl
+          cd dist
+          tar cf quadctl_${{ github.ref_name }}_amd64.tar quadctl
 
       - name: Create and Upload Release
         uses: softprops/action-gh-release@v2
