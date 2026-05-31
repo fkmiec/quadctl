@@ -261,7 +261,7 @@ func parseDotQuadlets(path string) (string, error) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		//fmt.Println("READING: " + line)
-		if strings.HasPrefix(line, "#") && strings.Contains(strings.TrimSpace(line), "Filename") {
+		if strings.HasPrefix(line, "#") && strings.Contains(strings.ToLower(strings.TrimSpace(line)), "filename") {
 			//fmt.Println("Found Filename...")
 			prop := strings.Split(line, "=")
 			if len(prop) > 1 {
@@ -272,9 +272,9 @@ func parseDotQuadlets(path string) (string, error) {
 		}
 		// Save file when hit the separator
 		if "---" == strings.TrimSpace(line) {
-			//fmt.Println("SAVING file...")
+			ext := getExtensionBasedOnSection(quadletText)
 
-			err := WriteFile(filepath.Join(tempDir, baseQuadletFilename), quadletText)
+			err := WriteFile(filepath.Join(tempDir, baseQuadletFilename+ext), quadletText)
 			if err != nil {
 				return "", err
 			}
@@ -292,13 +292,27 @@ func parseDotQuadlets(path string) (string, error) {
 	// Save file if reach end of .quadlet file with a filename and quadlet text
 	if len(baseQuadletFilename) > 0 && len(quadletText) > 0 {
 		//fmt.Println("SAVING FINAL FILE...")
-		err := WriteFile(filepath.Join(tempDir, baseQuadletFilename), quadletText)
+		ext := getExtensionBasedOnSection(quadletText)
+		err := WriteFile(filepath.Join(tempDir, baseQuadletFilename+ext), quadletText)
 		if err != nil {
 			return "", err
 		}
 	}
 
 	return tempDir, nil
+}
+
+func getExtensionBasedOnSection(text string) string {
+	if strings.Contains(text, "[Container]") {
+		return ".container"
+	} else if strings.Contains(text, "[Volume]") {
+		return ".volume"
+	} else if strings.Contains(text, "[Network]") {
+		return ".network"
+	} else if strings.Contains(text, "[Pod]") {
+		return ".pod"
+	}
+	return ""
 }
 
 func parseQuadlet(path string) (*Quadlet, error) {

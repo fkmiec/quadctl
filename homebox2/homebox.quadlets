@@ -1,11 +1,11 @@
-# Filename=homebox-data.volume
+# FileName=homebox-data
 [Volume]
 Driver=local
 
 [Install]
 WantedBy=default.target
 ---
-# Filename=homebox-app.container
+# FileName=homebox-app
 
 [Container]
 Environment=HBOX_LOG_LEVEL=info
@@ -23,7 +23,7 @@ Restart=always
 [Install]
 WantedBy=default.target
 ---
-# Filename=homebox.pod
+# FileName=homebox
 
 [Pod]
 PublishPort=3100:7745

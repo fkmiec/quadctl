@@ -97,6 +97,10 @@ Requirements:
 
 ```
 
+## A note on working with .quadlets files
 
+Podman added support for a combined .quadlets file format in which you may combine the contents of invididual .container, .pod, .volume and .network quadlets. See the example on the [podman quadlet install documentation page](https://docs.podman.io/en/stable/markdown/podman-quadlet-install.1.html). This seems like a convenient and desireable option. However, the implementation appears limited to just the `podman quadlet install` command, which will extract the individual quadlets when installing them. The quadlet generator, and even the `podman quadlet rm` command, do not appear to recognize the .quadlets file extension, which can lead to confusion. 
+
+Quadctl supports the .quadlets file format for all commands (ie. create, start, stop, rm, status, ps, etc.). It extracts the individual quadlets into their own files before processing and when the -s flag is provided, it _installs the extracted files_ to the quadlet generator directory. This is all essentially transparent, but you should be aware so that you are not confused when you invoke `quadctl -s ls` and see the extracted files, rather than your original .quadlets file. You'll also want to avoid using the `podman quadlet` subcommands and `quadctl` at the same time ... results in that case are likely to be frustrating. 
 
 
