@@ -436,15 +436,26 @@ func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 	}
 	funcs = append(funcs, f)
 
+	// If there was a .quadlets file, all the quadlets were extracted to and/or copied to a temp directory.
+	// Replace the original search directory with the temp directory for copy operations involve in systemd create op
+	searchDir := quadctl.SearchDir
+	if quadctl.DotQuadletsPath != "" {
+		searchDir = quadctl.DotQuadletsPath
+		if quadctl.UseSymbolicLinks {
+			fmt.Fprintf(os.Stderr, "Error: Cannot use symbolic links with .quadlets files.\n  The individual quadlets in a .quadlets file must be extracted to a temp directory before install to systemd.\n  Cannot link to temp directory.\n")
+			os.Exit(1)
+		}
+	}
+
 	// Use links if configured to do so
 	if quadctl.UseSymbolicLinks {
 		c.Output = append(c.Output, "Using symbolic links for installation.")
 		if quadctl.UseSubdirectories {
 			// Link the entire source directory as a subdirectory in the target location to keep related quadlets together
-			dest := filepath.Join(targetDir, filepath.Base(quadctl.SearchDir))
-			c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", dest, quadctl.SearchDir))
+			dest := filepath.Join(targetDir, filepath.Base(searchDir))
+			c.Output = append(c.Output, fmt.Sprintf("Linking directory %s -> %s", dest, searchDir))
 			f := func() {
-				if err := os.Symlink(quadctl.SearchDir, dest); err != nil {
+				if err := os.Symlink(searchDir, dest); err != nil {
 					//if err := runCommand([]string{prefix, "ln", "-s", sourceDir, filepath.Join(targetDir, filepath.Base(sourceDir))}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error linking target directory: %v\n", err)
 					os.Exit(1)
@@ -486,10 +497,10 @@ func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 		// If the user configured to use a subdirectory to organize quadlets, we create the directory and move files after podman quadlet install step.
 		if quadctl.UseSubdirectories {
 			//Create the subdirectory at target location
-			dest := filepath.Join(targetDir, filepath.Base(quadctl.SearchDir))
-			c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(quadctl.SearchDir), dest))
+			dest := filepath.Join(targetDir, filepath.Base(searchDir))
+			c.Output = append(c.Output, fmt.Sprintf("Copying directory %s to %s", filepath.Base(searchDir), dest))
 			f := func() {
-				if err := util.CopyDir(quadctl.SearchDir, dest); err != nil {
+				if err := util.CopyDir(searchDir, dest); err != nil {
 					fmt.Fprintf(os.Stderr, "  Failed to copy dir: %v\n", err)
 					os.Exit(1)
 				}
@@ -514,7 +525,7 @@ func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 
 				// Set dropInDir
 				if quadctl.UseSubdirectories {
-					destDropIn = filepath.Join(targetDir, filepath.Base(quadctl.SearchDir), filepath.Base(q.Filepath)+".d")
+					destDropIn = filepath.Join(targetDir, filepath.Base(searchDir), filepath.Base(q.Filepath)+".d")
 				} else {
 					destDropIn = filepath.Join(targetDir, filepath.Base(q.Filepath)+".d")
 				}

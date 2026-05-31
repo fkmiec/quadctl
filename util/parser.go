@@ -36,6 +36,7 @@ type Quadctl struct {
 	SearchDir         string
 	PodmanArgs        string
 	RunCmd            string
+	DotQuadletsPath   string
 	QuadletSrcPath    string // Path to the user's source directory containing quadlet folders or files
 	UseSubdirectories bool   // Default to installing quadlets in a subdirectory to keep them organized
 	UseSymbolicLinks  bool   // Default to copying files for installation to avoid potential issues with source files being moved or deleted, but can be configured to use symbolic links for a more dynamic setup
@@ -71,7 +72,7 @@ type Option struct {
 
 func InitQuadlets(quadctl *Quadctl) []*Quadlet {
 	// Discover, parse and resolve dependencies
-	quadlets, err := discoverAndParseQuadlets(quadctl.SearchDir)
+	quadlets, err := discoverAndParseQuadlets(quadctl, quadctl.SearchDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error processing quadlets in %s: %v\n", quadctl.SearchDir, err)
 		os.Exit(1)
@@ -116,7 +117,8 @@ func InitQuadlets(quadctl *Quadctl) []*Quadlet {
 
 // --- PARSING AND GENERATION LOGIC ---
 
-func discoverAndParseQuadlets(searchDir string) (map[string]*Quadlet, error) {
+func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Quadlet, error) {
+
 	quadlets := make(map[string]*Quadlet)
 
 	if info, err := os.Stat(searchDir); err != nil || !info.IsDir() {
@@ -134,37 +136,77 @@ func discoverAndParseQuadlets(searchDir string) (map[string]*Quadlet, error) {
 
 	/*
 	   Proposed modification to support single file format (.quadlet):
-	   - Check for a .quadlet file extension (single file format for quadlets)
-	   - If find a .quadlet file, create temp directory and extract quadlets into separate files with their indicated filenames and extensions
-	   - Call discoverAndParseQuadlets recursively with the tempDir path
-	   - Either return immediately after recursive call or continue to check for additional .quadlet files in the original searchDir
-	   -   If continue processing, then you need to merge quadlet maps else will be overwriting quadlets from earlier processing.
+	   - Loop over searchDir and check for a .quadlets file extension (single file format for quadlets)
+	   - If found one or more .quadlets file(s)
+	   -   Create temp directory and extract .quadlets into separate files with their indicated filenames and extensions
+	   -   Set DotQuadletsPath
+	   - If DotQuadletsPath != "" (ie. there were .quadlets files):
+	   -   Loop over files again and look for .container, .pod, .volume, .network and if found, copy to the temp directory
+	   -   Also copy any drop in directories
+	   -   Set searchDir = DotQuadletsPath (aka tempDir) and read files again from new searchDir
+
+	   - Loop over files and look for .container, .pod, .volume, .network and if found, parse quadlets
 	*/
 	for _, f := range files {
 		//fmt.Println(f.Name(), f.IsDir())
 		path := filepath.Join(searchDir, f.Name())
 		ext := filepath.Ext(path)
-		if ".quadlet" == ext {
-			tempDir, err := parseDotQuadlet(path)
+		if ".quadlets" == ext {
+			//parseDotQuadlets extracts individual quadlets into separate files in a temp directory
+			tempDir, err := parseDotQuadlets(path)
 			if err != nil {
 				return nil, err
 			}
-			tempQuadlets, err := discoverAndParseQuadlets(tempDir)
-			if err != nil {
-				return nil, err
-			}
-			for k, v := range tempQuadlets {
-				quadlets[k] = v
-			}
+
+			//Save the DotQuadletsPath (location .quadlets file was extracted to) in case needed for systemd install
+			quadctl.DotQuadletsPath = tempDir
+
+			//tempQuadlets, err := discoverAndParseQuadlets(quadctl, tempDir)
+			//if err != nil {
+			//	return nil, err
+			//}
+			//for k, v := range tempQuadlets {
+			//	quadlets[k] = v
+			//}
 		}
 	}
-	// Commenting out because assuming for now that any quadlet files should be processed.
-	// However, it might make more sense to return early if found .quadlet file since all
-	// related quadlets should be in the one file.
-	//
-	//if len(quadlets) > 0 {
-	//	return quadlets, nil
-	//}
+
+	// If there were .quadlets files, then we copy other dot files to the temp directory where .quadlets were extracted
+	if quadctl.DotQuadletsPath != "" {
+		for _, f := range files {
+			if f.IsDir() {
+				path := filepath.Join(searchDir, f.Name())
+				newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
+				if err := CopyDir(path, newPath); err != nil {
+					fmt.Fprintf(os.Stderr, " Error copying drop-in directory %s to %s: %v\n", path, newPath, err)
+					os.Exit(1)
+				}
+				continue
+			}
+			//fmt.Println(f.Name(), f.IsDir())
+			path := filepath.Join(searchDir, f.Name())
+			ext := filepath.Ext(path)
+			if extensions[ext] {
+				newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
+				if err := CopyFile(path, newPath); err != nil {
+					fmt.Fprintf(os.Stderr, " Error copying %s to temporary .quadlets processing path %s: %v\n", path, newPath, err)
+					os.Exit(1)
+				}
+			}
+		}
+		searchDir = quadctl.DotQuadletsPath
+		dir, err = os.Open(searchDir)
+		if err != nil {
+			return nil, err
+		}
+		files, err = dir.Readdir(0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Below will process all .container, .pod, .volume, .network files
+	// If there were .quadlets files, all were extracted to a temp directory and all other files and subdirectories were copied to the temp directory
 
 	for _, f := range files {
 		//fmt.Println(f.Name(), f.IsDir())
@@ -174,11 +216,13 @@ func discoverAndParseQuadlets(searchDir string) (map[string]*Quadlet, error) {
 			q, err := parseQuadlet(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, " Error parsing %s: %v\n", path, err)
+				os.Exit(1)
 			} else {
 				quadlets[q.ID] = q
 			}
 		}
 	}
+
 	// 2nd pass: Extract dependencies (after all have IDs)
 	for _, q := range quadlets {
 		extractDependencies(q, quadlets)
@@ -188,10 +232,12 @@ func discoverAndParseQuadlets(searchDir string) (map[string]*Quadlet, error) {
 }
 
 // Split quadlets by "---" on a separate new line and find filenames specified as "# FileName=<name>"
-func parseDotQuadlet(path string) (string, error) {
-	// For simplicity, we will just extract the .quadlet file into a temp directory with the same name as the .quadlet file (without extension) in the system temp directory.
-	base := filepath.Base(path)
-	id := strings.TrimSuffix(base, ".quadlet")
+func parseDotQuadlets(path string) (string, error) {
+	// Extract the .quadlets file into a temp directory with the same name as the original quadctl.SearchDir in the system temp directory.
+	//base := filepath.Base(path)
+	//id := strings.TrimSuffix(base, ".quadlets")
+
+	id := filepath.Base(filepath.Dir(path))
 	tempDir := filepath.Join(os.TempDir(), id)
 
 	//fmt.Printf("Temp Dir for .quadlet: %s\n", tempDir)
@@ -227,6 +273,7 @@ func parseDotQuadlet(path string) (string, error) {
 		// Save file when hit the separator
 		if "---" == strings.TrimSpace(line) {
 			//fmt.Println("SAVING file...")
+
 			err := WriteFile(filepath.Join(tempDir, baseQuadletFilename), quadletText)
 			if err != nil {
 				return "", err
@@ -238,7 +285,7 @@ func parseDotQuadlet(path string) (string, error) {
 		quadletText += line + "\n"
 	}
 	if err := scanner.Err(); err != nil {
-		fmt.Printf("Error reading .quadlet file: %v\n", err)
+		fmt.Printf("Error reading .quadlets file: %v\n", err)
 		os.Exit(1)
 	}
 

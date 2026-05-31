@@ -166,14 +166,15 @@ func createDirIfNotExists(path string) error {
 }
 
 func WriteFile(path string, text string) error {
-	//fmt.Println("WRITING: \n" + text)
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
+	//fmt.Printf("WriteFile %s with:\n%s\n", path, text)
 	_, err = f.WriteString(text)
+
 	return err
 }
 
