@@ -103,4 +103,8 @@ Podman added support for a combined .quadlets file format in which you may combi
 
 Quadctl supports the .quadlets file format for all commands (ie. create, start, stop, rm, status, ps, etc.). It extracts the individual quadlets into their own files before processing and when the -s flag is provided, it _installs the extracted files_ to the quadlet generator directory. This is all essentially transparent, but you should be aware so that you are not confused when you invoke `quadctl -s ls` and see the extracted files, rather than your original .quadlets file. You'll also want to avoid using the `podman quadlet` subcommands and `quadctl` at the same time ... results in that case are likely to be frustrating. 
 
+## A note on the use symbolic links configuration
 
+Quadctl supports the optional use of symbolic links in the quadlet generator directories. Some quadlet users like this approach because they can edit their source quadlet files, reload systemd and restart to see the changes. The `quadctl -s start` command will reload systemd and restart the quadlets to support that workflow.
+
+When the use_symbolic_links configuration is used in conjunction with use_subdirectories, the source quadlet directory is linked. `quadctl -s rm` will correctly remove the link without touching the original directory or its quadlet files. However, be careful not to manually perform a `rm -r` on the link as that will result in deletion of the source quadlet files. Likewise, using `podman quadlet rm` will delete the source quadlet file(s) in this case. For this reason, _*it's recommended that you avoid symbolic links.*_ With use_symbolic_links=false, a `quadctl -s rm` followed by `quadctl -s start` achieves a similar result with none of the risk.  
