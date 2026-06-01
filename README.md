@@ -23,7 +23,7 @@ Quadctl aims to provide a simple and consistent CLI for running and managing qua
   * Use `sudo quadctl -s start` to create and start _**rootful**_ containers under **systemd**
   * ... similarly for all other commands 
 * Quadlet dependency ordering handled by quadctl when run directly, or by systemd when -s flag provided.
-* Quadlet supports .container, .pod, .volume, .network and .quadlet (the currently proposed all-in-one .quadlet file format)
+* Quadlet supports .container, .pod, .volume, .network and .quadlets (the recently added all-in-one .quadlets file format)
 * Quadlet applications are organized in directories
   * e.g.
 ```
