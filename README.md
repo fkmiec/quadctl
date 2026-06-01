@@ -80,14 +80,14 @@ Commands:
   run        : Run a single .container in the foreground. Not supported for systemd. See quadctl run --help.
   stop       : Stop running services (do not remove). Use -s flag to stop under systemd.
   remove, rm : Remove stopped resources. Use -s flag to remove generated quadlets under systemd.
-  status     : Show current status. Use -s flag to see systemd status.
   logs       : Show logs of running containers. Use -s flag to view systemd logs.
   list, ls   : List quadlets in the configured quadlet_path or systemd path if -s flag is used.
 
 Wrapper commands (filtered to defined resources):
+  images : Show images defined for the set of related quadlets.
   ps     : Show state of containers.
   stats  : Show live stats for containers.
-  images : Show images defined for the set of related quadlets.
+  status : Show current status. Use -s flag to see systemd status.
 
 Requirements:
   A quadctl.ini config file is required. Default location is $HOME/.config/quadctl.
