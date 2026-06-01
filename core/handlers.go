@@ -69,6 +69,14 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	cmds := HandleCreate(quadctl, quadlets)
 	commands = append(commands, cmds...)
 
+	// Stop if already running (podman ps -a only returns a list if systemd services are running. Once stopped, it returns empty.)
+	if info, err := getContainerPS(quadlets); err == nil && len(info) > 0 {
+		if strings.Contains(info[0][3], "Up") {
+			cmd := HandleStop(quadlets)
+			commands = append(commands, cmd...)
+		}
+	}
+
 	//Start
 	for _, q := range quadlets {
 		// Use generateStartupCommands
@@ -190,15 +198,23 @@ func HandleSystemdStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comma
 
 	commands := []Command{}
 
+	// Create if not existing
 	info, _ := listSystemdInstalledQuadlets(quadlets)
 	if len(info) < len(quadlets) {
+		//fmt.Printf("installed count: %d, quadlet count: %d\n", len(info), len(quadlets))
 		cmd := HandleSystemdCreate(quadctl, quadlets)
+		commands = append(commands, cmd...)
+	} else {
+		// Reload quadlet definitions if not done as part of create step
+		cmd := HandleSystemdReload(quadctl)
 		commands = append(commands, cmd...)
 	}
 
-	// Reload quadlet definitions
-	//cmd := HandleSystemdReload(quadctl)
-	//commands = append(commands, cmd...)
+	// Stop if already running (podman ps -a only returns a list if systemd services are running. Once stopped, it returns empty.)
+	if info, err := getContainerPS(quadlets); err == nil && len(info) > 0 {
+		cmd := HandleSystemdStop(quadctl, quadlets, false)
+		commands = append(commands, cmd...)
+	}
 
 	// Start the systemd services
 	var buf bytes.Buffer
@@ -1246,16 +1262,16 @@ func resourceExists(qType string, name string) bool {
 }
 
 func listSystemdInstalledQuadlets(quadlets []*util.Quadlet) ([][]string, error) {
-	cmd := []string{"podman", "quadlet", "list", "--format", "{{.Name}},{{.Path}},{{.Unit}},{{.Status}}"}
+	cmd := []string{"podman", "quadlet", "list", "--format", "{{.Name}},{{.Path}},{{.UnitName}},{{.Status}}"}
 	output, err := runCommandCapture(cmd)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching installed quadlets: %v\n", err)
 		return nil, err
 	}
-
+	//.Printf("podman quadlet list:\n%s\n", output)
 	lines := strings.Split(output, "\n")
 	var info [][]string
 	for _, line := range lines {
-		//fmt.Println(line)
 		parts := strings.Split(line, ",")
 		if len(parts) < 4 {
 			continue
