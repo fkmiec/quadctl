@@ -32,6 +32,7 @@ type Quadctl struct {
 	IsVerbose         bool
 	IsFile            bool
 	ListDepth         int
+	IsListAll         bool
 	Subcommand        string
 	SearchDir         string
 	PodmanArgs        string
@@ -157,24 +158,17 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 			if err != nil {
 				return nil, err
 			}
-
-			//Save the DotQuadletsPath (location .quadlets file was extracted to) in case needed for systemd install
+			//Save the DotQuadletsPath (location .quadlets file was extracted to) for systemd install
 			quadctl.DotQuadletsPath = tempDir
-
-			//tempQuadlets, err := discoverAndParseQuadlets(quadctl, tempDir)
-			//if err != nil {
-			//	return nil, err
-			//}
-			//for k, v := range tempQuadlets {
-			//	quadlets[k] = v
-			//}
 		}
 	}
 
 	// If there were .quadlets files, then we copy other dot files to the temp directory where .quadlets were extracted
 	if quadctl.DotQuadletsPath != "" {
 		for _, f := range files {
+
 			if f.IsDir() {
+				//fmt.Printf("Calling CopyDir for: %s\n", f.Name())
 				path := filepath.Join(searchDir, f.Name())
 				newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
 				if err := CopyDir(path, newPath); err != nil {
@@ -183,10 +177,11 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 				}
 				continue
 			}
-			//fmt.Println(f.Name(), f.IsDir())
+
 			path := filepath.Join(searchDir, f.Name())
 			ext := filepath.Ext(path)
 			if extensions[ext] {
+				//fmt.Printf("Calling CopyFile for: %s\n", f.Name())
 				newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
 				if err := CopyFile(path, newPath); err != nil {
 					fmt.Fprintf(os.Stderr, " Error copying %s to temporary .quadlets processing path %s: %v\n", path, newPath, err)
@@ -209,7 +204,7 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 	// If there were .quadlets files, all were extracted to a temp directory and all other files and subdirectories were copied to the temp directory
 
 	for _, f := range files {
-		//fmt.Println(f.Name(), f.IsDir())
+		//fmt.Printf("Calling parseQuadlet for: %s\n", f.Name())
 		path := filepath.Join(searchDir, f.Name())
 		ext := filepath.Ext(path)
 		if extensions[ext] {
@@ -234,13 +229,17 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 // Split quadlets by "---" on a separate new line and find filenames specified as "# FileName=<name>"
 func parseDotQuadlets(path string) (string, error) {
 	// Extract the .quadlets file into a temp directory with the same name as the original quadctl.SearchDir in the system temp directory.
-	//base := filepath.Base(path)
-	//id := strings.TrimSuffix(base, ".quadlets")
-
 	id := filepath.Base(filepath.Dir(path))
 	tempDir := filepath.Join(os.TempDir(), id)
 
 	//fmt.Printf("Temp Dir for .quadlet: %s\n", tempDir)
+
+	// Remove tempDir, if exists already, so that no old files remain from prior runs.
+	err := os.RemoveAll(tempDir)
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Failed to remove existing temp directory: %v\n", err)
+		return "", err
+	}
 
 	// Create temp directory
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
@@ -272,9 +271,9 @@ func parseDotQuadlets(path string) (string, error) {
 		}
 		// Save file when hit the separator
 		if "---" == strings.TrimSpace(line) {
-			ext := getExtensionBasedOnSection(quadletText)
+			baseQuadletFilename = checkExtension(baseQuadletFilename, quadletText)
 
-			err := WriteFile(filepath.Join(tempDir, baseQuadletFilename+ext), quadletText)
+			err := WriteFile(filepath.Join(tempDir, baseQuadletFilename), quadletText)
 			if err != nil {
 				return "", err
 			}
@@ -292,8 +291,8 @@ func parseDotQuadlets(path string) (string, error) {
 	// Save file if reach end of .quadlet file with a filename and quadlet text
 	if len(baseQuadletFilename) > 0 && len(quadletText) > 0 {
 		//fmt.Println("SAVING FINAL FILE...")
-		ext := getExtensionBasedOnSection(quadletText)
-		err := WriteFile(filepath.Join(tempDir, baseQuadletFilename+ext), quadletText)
+		baseQuadletFilename = checkExtension(baseQuadletFilename, quadletText)
+		err := WriteFile(filepath.Join(tempDir, baseQuadletFilename), quadletText)
 		if err != nil {
 			return "", err
 		}
@@ -302,17 +301,24 @@ func parseDotQuadlets(path string) (string, error) {
 	return tempDir, nil
 }
 
-func getExtensionBasedOnSection(text string) string {
-	if strings.Contains(text, "[Container]") {
-		return ".container"
-	} else if strings.Contains(text, "[Volume]") {
-		return ".volume"
-	} else if strings.Contains(text, "[Network]") {
-		return ".network"
-	} else if strings.Contains(text, "[Pod]") {
-		return ".pod"
+// Add quadlet file extension if omitted in user's .quadlets file. Podman docs had examples with extension and later without, so handle both.
+func checkExtension(filename string, quadletText string) string {
+	//fmt.Printf("checkExtension filename param: %s\n", filename)
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		if strings.Contains(quadletText, "[Container]") {
+			ext = ".container"
+		} else if strings.Contains(quadletText, "[Volume]") {
+			ext = ".volume"
+		} else if strings.Contains(quadletText, "[Network]") {
+			ext = ".network"
+		} else if strings.Contains(quadletText, "[Pod]") {
+			ext = ".pod"
+		}
+		filename += ext
 	}
-	return ""
+	//fmt.Printf("checkExtension filename returned: %s\n", filename)
+	return filename
 }
 
 func parseQuadlet(path string) (*Quadlet, error) {
@@ -386,6 +392,12 @@ func parseQuadlet(path string) (*Quadlet, error) {
 		}
 		if val, ok := contSec["AutoUpdate"]; ok && len(val) > 0 {
 			q.GeneratedNames["auto_update"] = val[0]
+		}
+	}
+
+	if podSec, ok := q.Sections["Pod"]; ok {
+		if val, ok := podSec["PodName"]; ok && len(val) > 0 {
+			q.GeneratedNames["pod_name"] = val[0]
 		}
 	}
 
@@ -464,7 +476,14 @@ func extractDependencies(q *Quadlet, all map[string]*Quadlet) {
 	if q.Type == ".container" {
 		cont := q.Sections["Container"]
 		if pod, ok := cont["Pod"]; ok && len(pod) > 0 {
-			depSet[strings.TrimSuffix(pod[0], ".pod")] = true
+			podID := strings.TrimSuffix(pod[0], ".pod")
+			depSet[podID] = true
+			// Get the user-specified pod name for potential use in ps filters, otherwise will use pod ID as the pod name
+			podName := all[podID].GeneratedNames["pod_name"]
+			if podName == "" {
+				podName = podID
+			}
+			q.GeneratedNames["pod_name"] = podName
 		}
 
 		for _, net := range cont["Network"] {

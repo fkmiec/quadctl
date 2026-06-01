@@ -849,15 +849,37 @@ func HandleImages(quadlets []*util.Quadlet) {
 
 func HandleList(quadctl *util.Quadctl) error {
 
-	absPath := quadctl.QuadletSrcPath
-	if quadctl.IsSystemd {
-		if quadctl.IsRootful {
-			absPath = quadctl.QuadletRootPath
-		} else {
-			absPath = quadctl.QuadletUserPath
+	if !quadctl.IsListAll {
+		absPath := quadctl.QuadletSrcPath
+		if quadctl.IsSystemd {
+			if quadctl.IsRootful {
+				absPath = quadctl.QuadletRootPath
+			} else {
+				absPath = quadctl.QuadletUserPath
+			}
 		}
+		return listQuadlets(absPath, quadctl.ListDepth)
+	} else {
+		err := listQuadlets(quadctl.QuadletSrcPath, quadctl.ListDepth)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing quadlets in search directory: %v\n", err)
+			os.Exit(1)
+		}
+		err = listQuadlets(quadctl.QuadletRootPath, quadctl.ListDepth)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing quadlets in search directory: %v\n", err)
+			os.Exit(1)
+		}
+		err = listQuadlets(quadctl.QuadletUserPath, quadctl.ListDepth)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing quadlets in search directory: %v\n", err)
+			os.Exit(1)
+		}
+		return nil
 	}
+}
 
+func listQuadlets(absPath string, depth int) error {
 	// Verify the path exists and is a directory
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -881,7 +903,7 @@ func HandleList(quadctl *util.Quadctl) error {
 
 	// Start recursive rendering (root is level 1, its children are level 2)
 	lw.Indent()
-	err = appendDirItems(lw, absPath, 2, quadctl.ListDepth)
+	err = appendDirItems(lw, absPath, 2, depth)
 	if err != nil {
 		return err
 	}
@@ -1270,7 +1292,8 @@ func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
 		}
 		//filter for containers that match our quadlet definitions by name or parent pod
 		for _, q := range quadlets {
-			if q.Type == ".container" && strings.HasSuffix(parts[1], q.GeneratedNames["container"]) || (q.ParentPod != "" && strings.HasSuffix(parts[2], q.ParentPod)) {
+			//if q.Type == ".container" && strings.HasSuffix(parts[1], q.GeneratedNames["container"]) || (q.ParentPod != "" && strings.HasSuffix(parts[2], q.ParentPod)) {
+			if q.Type == ".container" && strings.HasSuffix(parts[1], q.GeneratedNames["container"]) || (q.ParentPod != "" && strings.HasSuffix(parts[2], q.GeneratedNames["pod_name"])) {
 				psInfo = append(psInfo, parts)
 				break
 			}
