@@ -61,7 +61,7 @@ func DefaultRunFn(c *Command) {
 		//  In practice this means KEY="some val with spaces" will be stripped and requoted by exec.Command as "KEY=some val with spaces",
 		//  which works fine.
 		for i, arg := range c.Cmd {
-			c.Cmd[i] = strings.ReplaceAll(arg, "\"", "")
+			c.Cmd[i] = strings.Trim(arg, `"`)
 		}
 
 		cmd := exec.Command(c.Cmd[0], c.Cmd[1:]...)

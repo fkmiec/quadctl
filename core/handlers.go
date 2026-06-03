@@ -88,6 +88,13 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 			c.Warnings = warns
 			commands = append(commands, c)
 		}
+
+		/*
+			//NOT NEEDED. Podman already monitors health of containers and can kill it if reports unhealthy based on healthcheck options.
+			if monitorCmd := generateStartupMonitorCommand(quadctl, q); monitorCmd != nil {
+				commands = append(commands, *monitorCmd)
+			}
+		*/
 	}
 	return commands
 }
@@ -1224,6 +1231,144 @@ func generateRunCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []str
 
 	return runCmd, warnings
 }
+
+/*
+// NOT NEEDED. Podman already monitors health of containers and can kill it if reports unhealthy based on healthcheck options.
+func generateStartupMonitorCommand(quadctl *util.Quadctl, q *util.Quadlet) *Command {
+
+	var c *Command
+	if q.Type != ".container" {
+		fmt.Println("Not a .container...")
+		return c
+	}
+	contSec, _ := q.Sections["Container"]
+	if contSec["Notify"] == nil || !strings.Contains(strings.ToLower(contSec["Notify"][0]), "healthy") {
+		fmt.Println("Notify=healthy not found in [Container] section ...")
+		return c
+	}
+
+	cmd := NewCommand(fmt.Sprintf("Monitoring startup of %s", q.ID))
+	c = &cmd
+	timeoutSecs := 30
+	intervalSecs := 5
+	healthStartupPeriodSecs := 0
+	retries := 3
+	var err error
+
+	if contSec["HealthStartupCmd"] != nil {
+
+		if contSec["HealthStartupTimeout"] != nil {
+			timeoutSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupTimeout"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupTimeout for %s: %v\n  Defaulting to 30 seconds.", q.ID, err))
+				timeoutSecs = 30
+			}
+		}
+
+		if contSec["HealthStartupInterval"] != nil {
+			intervalSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupInterval"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupInterval for %s: %v\n  Defaulting to 5 seconds.", q.ID, err))
+				intervalSecs = 5
+			}
+		}
+
+		if contSec["HealthStartupRetries"] != nil {
+			retries, err = strconv.Atoi(contSec["HealthStartupRetries"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupRetries for %s: %v\n  Defaulting to 3.", q.ID, err))
+				retries = 3
+			}
+		}
+
+		if contSec["HealthStartupPeriod"] != nil {
+			healthStartupPeriodSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupPeriod"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupPeriod for %s: %v\n  Defaulting to 0 seconds.", q.ID, err))
+				healthStartupPeriodSecs = 0
+			}
+		}
+	}
+
+	if contSec["HealthCmd"] == nil {
+		if contSec["HealthTimeout"] != nil {
+			timeoutSecs, err = util.ParseDurationToSeconds(contSec["HealthTimeout"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthTimeout for %s: %v\n  Defaulting to 30 seconds.", q.ID, err))
+				timeoutSecs = 30
+			}
+		}
+
+		if contSec["HealthInterval"] != nil {
+			intervalSecs, err = util.ParseDurationToSeconds(contSec["HealthInterval"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthInterval for %s: %v\n  Defaulting to 5 seconds.", q.ID, err))
+				intervalSecs = 5
+			}
+		}
+
+		if contSec["HealthRetries"] != nil {
+			retries, err = strconv.Atoi(contSec["HealthRetries"][0])
+			if err != nil {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthRetries for %s: %v\n  Defaulting to 3.", q.ID, err))
+				retries = 3
+			}
+		}
+	}
+
+	totalTimeout := time.Duration(healthStartupPeriodSecs+(timeoutSecs*retries)+(intervalSecs*retries)) * time.Second
+
+	c.Label = fmt.Sprintf("Monitoring startup of %s (Timeout: %v)", q.ID, totalTimeout)
+
+	funcs := []func(){}
+	//c.PreFn = func(c *Command) {}
+	//c.PostFn = func(c *Command) {}
+
+	f := func() {
+		expiration := time.Now().Add(totalTimeout)
+
+		for time.Now().Before(expiration) {
+			if info, err := getContainerPS([]*util.Quadlet{q}); info != nil && err == nil {
+				if strings.Contains(strings.ToLower(info[0][3]), "healthy") {
+					if quadctl.IsVerbose {
+						fmt.Printf("  Success: %s is healthy! Current status: %s\n", q.ID, info[0][3])
+					}
+					return
+				} else {
+					if quadctl.IsVerbose {
+						fmt.Printf("  Warning: %s started but is not healthy. Current status: %s\n", q.ID, info[0][3])
+					}
+					time.Sleep(1 * time.Second)
+					continue
+				}
+			} else if err != nil {
+				fmt.Printf("  Warning: Failed to get status for %s: %v\n", q.ID, err)
+				os.Exit(1)
+			}
+		}
+		fmt.Printf("Error: %s failed to reach healthy state within the expected time.\n", q.ID)
+		stopCmd := generateStopCommand(q)
+		if len(stopCmd) > 0 {
+			fmt.Printf("Attempting to stop %s...\n", q.ID)
+			if err := runCommandSilently(stopCmd); err != nil {
+				fmt.Printf("Failed to stop %s: %v\n", q.ID, err)
+			} else {
+				fmt.Printf("%s stopped successfully.\n", q.ID)
+			}
+		}
+		os.Exit(1)
+	}
+
+	funcs = append(funcs, f)
+	// Custom run function that will, when executed by runCommands(), execute the anonymous functions created above.
+	c.RunFn = func(c *Command) {
+		for _, f := range funcs {
+			f()
+		}
+	}
+	return c
+}
+*/
 
 func generateStopCommand(q *util.Quadlet) []string {
 	cmd := []string{}

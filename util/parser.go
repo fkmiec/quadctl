@@ -441,10 +441,12 @@ func parseIniFile(path string, q *Quadlet) error {
 				key := strings.TrimSpace(parts[0])
 				val := strings.TrimSpace(parts[1])
 
+				//fmt.Printf("Parsing option: [%s] %s=%s\n", currentSection, key, val)
 				//Handle options specified using a multiple space-separated value format
 				values := ParseFields(val)
 				for _, v := range values {
 					q.Sections[currentSection][key] = append(q.Sections[currentSection][key], v)
+					//fmt.Printf("  Parsed value: %s\n", v)
 				}
 
 				//q.Sections[currentSection][key] = append(q.Sections[currentSection][key], val)
@@ -595,17 +597,52 @@ func ParseFields(input string) []string {
 		fields = append(fields, currentToken.String())
 	}
 
-	/*
-		//Quote any unquoted (previously quoted) strings with spaces
-		for i, f := range fields {
-			if strings.Contains(f, " ") {
-				fields[i] = fmt.Sprintf("%q", f)
-			}
-		}
-	*/
-
 	return fields
 }
+
+/*
+func ParseDurationToSeconds(duration string) (int, error) {
+	var totalSeconds int
+	var currentNum strings.Builder
+
+	for _, r := range duration {
+		switch {
+		case r >= '0' && r <= '9':
+			currentNum.WriteRune(r)
+		case r == 's':
+
+			num, err := strconv.Atoi(currentNum.String())
+			if err != nil {
+				return 0, fmt.Errorf("invalid seconds value: %v", err)
+			}
+			totalSeconds += num
+			currentNum.Reset()
+		case r == 'm':
+			num, err := strconv.Atoi(currentNum.String())
+			if err != nil {
+				return 0, fmt.Errorf("invalid minutes value: %v", err)
+			}
+			totalSeconds += num * 60
+			currentNum.Reset()
+		case r == 'h':
+			num, err := strconv.Atoi(currentNum.String())
+			if err != nil {
+				return 0, fmt.Errorf("invalid hours value: %v", err)
+			}
+			totalSeconds += num * 3600
+			currentNum.Reset()
+		default:
+			return 0, fmt.Errorf("invalid character in duration: %c", r)
+		}
+	}
+
+	if currentNum.Len() > 0 {
+		return 0, fmt.Errorf("trailing number without unit: %s", currentNum.String())
+	}
+
+	return totalSeconds, nil
+}
+*/
 
 func QuadletOptionToPodman(qType string, options map[string]schema.SchemaOption, k string, v string) (string, error) {
 	var buf bytes.Buffer
