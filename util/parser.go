@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/fkmiec/quadctl/schema"
+	yaml "github.com/goccy/go-yaml"
 )
 
 var (
@@ -33,6 +34,7 @@ type Quadctl struct {
 	IsFile            bool
 	ListDepth         int
 	IsListAll         bool
+	IsLongStatus      bool
 	Subcommand        string
 	SearchDir         string
 	PodmanArgs        string
@@ -655,4 +657,73 @@ func QuadletOptionToPodman(qType string, options map[string]schema.SchemaOption,
 		return buf.String(), nil
 	}
 	return "", fmt.Errorf("Quadlet %s option not defined: %s", qType, k)
+}
+
+/*
+func main() {
+	resources, _ := readK8sYaml("/tmp/test.yaml")
+	for _, res := range resources {
+		fmt.Printf("Type: %s\nName: %s\nImage: %s\n", res["type"], res["name"], res["image"])
+	}
+}
+*/
+
+func readYamlFile(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+// Very basic extraction by scanning for "image:" key in Kubernetes YAML
+func readK8sYaml(yamlPath string) ([]map[string]interface{}, error) {
+
+	var resources []map[string]interface{}
+
+	yml, _ := readYamlFile(yamlPath)
+
+	var kind string
+	var pod map[string]interface{}
+	path, err := yaml.PathString("$.kind")
+	if err != nil {
+		fmt.Printf("Error creating YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	if err := path.Read(strings.NewReader(yml), &kind); err != nil {
+		fmt.Printf("Error reading kind YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	if kind != "Pod" {
+		fmt.Printf("Unsupported Kubernetes resource kind: %s\n", kind)
+		os.Exit(1)
+	}
+	path, err = yaml.PathString("$.metadata")
+	if err != nil {
+		fmt.Printf("Error creating YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	if err := path.Read(strings.NewReader(yml), &pod); err != nil {
+		fmt.Printf("Error reading metadata YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	pod["type"] = "pod"
+	resources = append(resources, pod)
+
+	var containers []map[string]interface{}
+	path, err = yaml.PathString("$.spec.containers[*]")
+	if err != nil {
+		fmt.Printf("Error creating YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	if err := path.Read(strings.NewReader(yml), &containers); err != nil {
+		fmt.Printf("Error reading containers YAML path: %v\n", err)
+		os.Exit(1)
+	}
+	for i := range containers {
+		containers[i]["type"] = "container"
+	}
+	resources = append(resources, containers...)
+
+	return resources, nil
 }

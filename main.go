@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"path/filepath"
 	"slices"
 
 	. "github.com/fkmiec/quadctl/core"
@@ -29,8 +30,13 @@ func main() {
 	// If no quadlets at this point, only list|ls is still a valid command.
 	// Abort with a message. User probably didn't notice they were neither in a quadlet directory nor specified one as argument.
 	if len(quadlets) < 1 && !(slices.Contains([]string{"list", "ls", "logs"}, quadctl.Subcommand)) {
-		fmt.Printf("Error: No quadlets found in directory: %s\n", quadctl.SearchDir)
-		os.Exit(1)
+
+		err := displayQuadletSelector(quadctl)
+		if err != nil {
+			fmt.Printf("Error: No quadlets found in directory: %s\n", quadctl.SearchDir)
+			os.Exit(1)
+		}
+		quadlets = util.InitQuadlets(quadctl)
 	}
 
 	var commands []Command
@@ -135,4 +141,21 @@ func initState() {
 	if os.Geteuid() == 0 {
 		quadctl.IsRootful = true
 	}
+}
+
+func displayQuadletSelector(quadctl *util.Quadctl) error {
+	quadletDirs, err := util.ListSubdirectories(quadctl.QuadletSrcPath)
+	if err != nil {
+		return err
+	}
+
+	if len(quadletDirs) == 0 {
+		return fmt.Errorf("no quadlet directories found in %s", quadctl.QuadletSrcPath)
+	}
+	selected, err := util.SelectFromList(quadletDirs)
+	if err != nil {
+		return err
+	}
+	quadctl.SearchDir = filepath.Join(quadctl.QuadletSrcPath, selected)
+	return nil
 }

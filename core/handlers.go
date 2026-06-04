@@ -295,30 +295,35 @@ func HandleSystemdStop(quadctl *util.Quadctl, quadlets []*util.Quadlet, stopNetA
 
 func HandleSystemdStatus(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
-	commands := []Command{}
+	if quadctl.IsLongStatus {
+		commands := []Command{}
 
-	var buf bytes.Buffer
-	data := map[string]string{}
-	if !quadctl.IsRootful {
-		data["user"] = "--user"
-	}
-	err := quadctl.SystemdStatusTmpl.Execute(&buf, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing systemd status template: %v\n", err)
-		os.Exit(1)
-	}
-	args := util.ParseFields(buf.String())
-	for _, q := range quadlets {
-		args = append(args, q.ServiceName)
-	}
-	if quadctl.IsPrintOnly {
-		c := NewCommand("Getting systemd status")
-		c.Cmd = args
-		commands = append(commands, c)
+		var buf bytes.Buffer
+		data := map[string]string{}
+		if !quadctl.IsRootful {
+			data["user"] = "--user"
+		}
+		err := quadctl.SystemdStatusTmpl.Execute(&buf, data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error executing systemd status template: %v\n", err)
+			os.Exit(1)
+		}
+		args := util.ParseFields(buf.String())
+		for _, q := range quadlets {
+			args = append(args, q.ServiceName)
+		}
+		if quadctl.IsPrintOnly {
+			c := NewCommand("Getting systemd status")
+			c.Cmd = args
+			commands = append(commands, c)
+		} else {
+			runCommand(args)
+		}
+		return commands
 	} else {
-		runCommand(args)
+		displayListOfSystemdInstalledQuadlets(quadlets)
+		return []Command{}
 	}
-	return commands
 }
 
 func HandleSystemdLogs(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
@@ -1461,4 +1466,44 @@ func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
 		}
 	}
 	return psInfo, nil
+}
+
+func displayListOfSystemdInstalledQuadlets(quadlets []*util.Quadlet) error {
+	/*
+		//podman quadlet list --format "{{.Name}}|{{.UnitName}}|{{.Path}}|{{.Status}}\n"
+		cmd := []string{"podman", "quadlet", "list", "--format", "{{.Name}}|{{.UnitName}}|{{.Path}}|{{.Status}}"}
+		output, err := runCommandCapture(cmd)
+		if err != nil {
+			return err
+		}
+		info := [][]string{}
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			parts := strings.Split(line, "|")
+			if len(parts) < 4 {
+				continue
+			}
+			info = append(info, parts)
+		}
+	*/
+	info, err := listSystemdInstalledQuadlets(quadlets)
+	if err != nil {
+		return err
+	}
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"NAME", "UNIT NAME", "PATH", "STATUS"})
+	for _, quadletInfo := range info {
+		if len(quadletInfo) >= 4 {
+			t.AppendRow(table.Row{
+				strings.TrimSpace(quadletInfo[0]),
+				strings.TrimSpace(quadletInfo[1]),
+				strings.TrimSpace(quadletInfo[2]),
+				strings.TrimSpace(quadletInfo[3]),
+			})
+		}
+	}
+	t.SetStyle(table.StyleColoredYellowWhiteOnBlack)
+	t.Render()
+	return nil
 }

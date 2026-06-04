@@ -219,3 +219,18 @@ func CopyDir(src, dst string) error {
 	}
 	return nil
 }
+
+func ListSubdirectories(path string) ([]string, error) {
+	var directories []string
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directories = append(directories, entry.Name())
+	}
+	return directories, nil
+}

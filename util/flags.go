@@ -94,6 +94,8 @@ func InitFlags(quadctl *Quadctl) {
 
 	// status
 	statusFlags := flag.NewFlagSet("status", flag.ExitOnError)
+	statusFlags.BoolVar(&quadctl.IsLongStatus, "long", false, "Display long format output from systemctl status (default: false)")
+	statusFlags.BoolVar(&quadctl.IsLongStatus, "l", false, "Display long format output from systemctl status (default: false)")
 	statusFlags.BoolVar(&quadctl.IsFile, "file", false, "Specify that the provided path is a file rather than a directory (default: false)")
 	statusFlags.BoolVar(&quadctl.IsFile, "f", false, "Specify that the provided path is a file rather than a directory (default: false)")
 	statusFlags.BoolVar(&quadctl.IsPrintOnly, "print", false, "Print podman commands without executing")
@@ -241,7 +243,8 @@ func PrintStatusUsage() {
 	fmt.Fprintf(os.Stderr, "Flags:\n")
 	flagSets["status"].PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nNotes:\n")
-	fmt.Fprintf(os.Stderr, "  Will display systemctl status if -s flag provided. Otherwise, calls 'quadctl ps'.\n")
+	fmt.Fprintf(os.Stderr, "  Will display systemd status if -s flag provided. Otherwise, calls 'quadctl ps'.\n")
+	fmt.Fprintf(os.Stderr, "  Calls 'podman quadlet list' for systemd status by default, 'systemctl status' with -l flag.\n")
 	fmt.Fprintf(os.Stderr, "  Use sudo for rootless quadlets.\n")
 	fmt.Fprintf(os.Stderr, "  Use -s to display status of quadlets under systemd.\n")
 }
