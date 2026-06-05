@@ -23,7 +23,7 @@ Quadctl aims to provide a simple and consistent CLI for running and managing qua
   * Use `sudo quadctl -s start` to create and start _**rootful**_ containers under **systemd**
   * ... similarly for all other commands 
 * Quadlet dependency ordering handled by quadctl when run directly, or by systemd when -s flag provided.
-* Quadlet supports .container, .pod, .volume, .network and .quadlets (the recently added all-in-one .quadlets file format)
+* Quadlet supports .container, .pod, .volume, .network, .kube and .quadlets (the recently added all-in-one .quadlets file format)
 * Quadlet applications are organized in directories
   * e.g.
 ```
@@ -41,6 +41,7 @@ Quadctl aims to provide a simple and consistent CLI for running and managing qua
   *  From /homebox, `quadctl start` works similarly to `docker compose up`
   *  From /quadlet.src.path, `quadctl start homebox` will bring up the app
   *  If quadlet.src.path is configured, `quadctl start homebox` will work from anywhere on the system
+  *  If no quadlet directory is specified, quadctl will list quadlet directories under quadlet.src.path for the user to choose. 
 * Deploying to and removing from systemd quadlet generator directories is handled automatically when create and remove are used with the -s flag.
 * Systemd reload is handled automatically
 * The `list` command produces a tree listing of quadlets in quadlet.src.path or systemd quadlet generator directories.
@@ -97,11 +98,17 @@ Requirements:
 
 ```
 
+## A note on working with .kube files
+
+A .kube quadlet enables the use of a Kubernetes deployment yaml file to create and manage pods, containers and other resources. The .kube file is specific to running `podman kube play` under systemd. However, since this is a tool supporting the use of Quadlets with or without systemd, a minimal .kube quadlet file is required by quadctl along with the .yaml file. This ensures consistent behavior when using any of the supported quadlet types under both systemd and podman. When run under systemd, a single systemd service (name matches the .kube file without the extension, or the ServiceName if specified in the .kube file) is created that calls `podman kube play`. That service will appear in response to `quadctl -s status` but the actual pods and containers will be seen in response to `quadctl ps`, `quadctl stats`, etc.
+
+While `podman kube play` handles most of the work, quadctl continues to provide a user-friendly workflow. Quadctl gives you a consistent CLI whether under systemd or podman, filters the output of ps, stats, status, images, logs, etc., handles user and root pathing for systemd installation and removal, uses the convenient quadlets.src.path enabling you to list and manage quadlets from any location on the host system.   
+
 ## A note on working with .quadlets files
 
 Podman added support for a combined .quadlets file format in which you may combine the contents of invididual .container, .pod, .volume and .network quadlets. See the example on the [podman quadlet install documentation page](https://docs.podman.io/en/stable/markdown/podman-quadlet-install.1.html). This seems like a convenient and desireable option. However, the implementation appears limited to just the `podman quadlet install` command, which will extract the individual quadlets when installing them. The quadlet generator, and even the `podman quadlet rm` command, do not appear to recognize the .quadlets file extension, which can lead to confusion. 
 
-Quadctl supports the .quadlets file format for all commands (ie. create, start, stop, rm, status, ps, etc.). It extracts the individual quadlets into their own files before processing and when the -s flag is provided, it _installs the extracted files_ to the quadlet generator directory. This is all essentially transparent, but you should be aware so that you are not confused when you invoke `quadctl -s ls` and see the extracted files, rather than your original .quadlets file. You'll also want to avoid using the `podman quadlet` subcommands and `quadctl` at the same time ... results in that case are likely to be frustrating. 
+Quadctl supports the .quadlets file format for all commands (ie. create, start, stop, rm, status, ps, etc.). It extracts the individual quadlets into their own files before processing and when the -s flag is provided, it _installs the extracted files_ to the quadlet generator directory. This is all essentially transparent, but you should be aware so that you are not confused when you invoke `quadctl -s ls` and see the extracted files, rather than your original .quadlets file. You'll also want to avoid using the `podman quadlet` subcommands and `quadctl` at the same time since they work differently ... results in that case are likely to be frustrating. 
 
 ## A note on the use symbolic links configuration
 
