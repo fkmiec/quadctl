@@ -6,6 +6,7 @@ import "text/template"
 func GetKubeOptions() []SchemaOption {
 	options := []SchemaOption{
 		optYaml(),
+		optKubeServiceName(),
 		optAutoUpdate(),
 		optConfigMap(),
 		optExitCodePropagation(),
@@ -37,6 +38,18 @@ func optYaml() SchemaOption {
 		Description:     "The path, absolute or relative to unit file, to the Kubernetes YAML file to use. This is the only required key.",
 		QuadletTemplate: "{{.Key}}={{.Value}}",
 		PodmanTemplate:  "{{.Value}}",
+		AllowMultiple:   false,
+		Values:          []OptionValue{},
+	}
+}
+
+func optKubeServiceName() SchemaOption {
+	return SchemaOption{
+		QuadletKey:      "ServiceName",
+		PodmanKey:       "--service-name",
+		Description:     "Assign a name to the Systemd service. Default is <unitname>. No equivalent podman CLI option.",
+		QuadletTemplate: "{{.Key}}={{.Value}}",
+		PodmanTemplate:  "",
 		AllowMultiple:   false,
 		Values:          []OptionValue{},
 	}
