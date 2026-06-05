@@ -17,6 +17,38 @@ import (
 
 // --- CORE LOGIC HANDLERS ---
 
+func HandlePull(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
+
+	commands := []Command{}
+
+	images := []string{}
+	for _, q := range quadlets {
+		if q.Type == ".container" {
+			if imgSec, ok := q.Sections["Container"]; ok {
+				if imgList, ok := imgSec["Image"]; ok && len(imgList) > 0 {
+					images = append(images, imgList[0])
+				}
+			}
+		} else if q.Type == ".kube" {
+			for _, res := range q.KubeResources {
+				if res["type"] == "container" {
+					images = append(images, res["image"].(string))
+				}
+			}
+		}
+	}
+
+	for _, img := range images {
+		//fmt.Printf("=> Pulling image: %s\n", img)
+		c := NewCommand(fmt.Sprintf("Pulling image %s", img))
+		c.Cmd = []string{"podman", "pull", img}
+		commands = append(commands, c)
+	}
+
+	return commands
+	//RunCommands(quadctl, commands)
+}
+
 // handleCreate generates and executes 'podman create' commands for all resources, but first checks if they exist and prints warnings if they do,
 // suggesting to run 'remove' first if intent is to re-create. It also handles special cases like auto-restart configuration warnings.
 func HandleCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
@@ -24,6 +56,16 @@ func HandleCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	commands := []Command{}
 
 	for _, q := range quadlets {
+
+		// For .kube, podman kube play will be called in start step. Return a no-op command with a warning here if verbose output is enabled.
+		if q.Type == ".kube" && quadctl.IsVerbose {
+			cmd := NewCommand(fmt.Sprintf("Creating %s %s", q.Type, q.ID))
+			cmd.Warnings = append(cmd.Warnings, fmt.Sprintf("Podman kube play handles creation. Nothing to do for %s %s", q.Type, q.ID))
+			cmd.Cmd = []string{"echo"}
+			commands = append(commands, cmd)
+			continue
+		}
+
 		//Only create if resource doesn't exist.
 		if !resourceExists(q.Type, q.ID) {
 			// For 'run' command, skip creating containers since 'podman run' will create them if they don't exist.
@@ -65,6 +107,7 @@ func HandleCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	commands := []Command{}
+
 	//Create, if necessary
 	cmds := HandleCreate(quadctl, quadlets)
 	commands = append(commands, cmds...)
@@ -72,7 +115,7 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	// Stop if already running (podman ps -a only returns a list if systemd services are running. Once stopped, it returns empty.)
 	if info, err := getContainerPS(quadlets); err == nil && len(info) > 0 {
 		if strings.Contains(info[0][3], "Up") {
-			cmd := HandleStop(quadlets)
+			cmd := HandleStop(quadctl, quadlets)
 			commands = append(commands, cmd...)
 		}
 	}
@@ -80,7 +123,9 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	//Start
 	for _, q := range quadlets {
 		// Use generateStartupCommands
-		cmd, warns := generateStartupCommand(q)
+		cmd, warns := generateStartupCommand(quadctl, q)
+
+		fmt.Printf("Command for quadlet %s is %v\n", q.ID, cmd)
 
 		if len(cmd) > 0 {
 			c := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
@@ -88,13 +133,6 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 			c.Warnings = warns
 			commands = append(commands, c)
 		}
-
-		/*
-			//NOT NEEDED. Podman already monitors health of containers and can kill it if reports unhealthy based on healthcheck options.
-			if monitorCmd := generateStartupMonitorCommand(quadctl, q); monitorCmd != nil {
-				commands = append(commands, *monitorCmd)
-			}
-		*/
 	}
 	return commands
 }
@@ -130,8 +168,8 @@ func HandleRun(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	//Start
 	for _, q := range quadlets {
-		// Only run containers. Pods, networks and volumes will be started/created as needed by the containers.
-		if q.Type != ".container" {
+		// Only run containers and kubes. Pods, networks and volumes will be started/created as needed by the containers.
+		if q.Type != ".container" && q.Type != ".kube" {
 			continue
 		}
 		// For 'run' command, we need to generate 'podman run' commands instead of 'podman start' for containers.
@@ -159,14 +197,14 @@ func HandleRun(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	return commands
 }
 
-func HandleStop(quadlets []*util.Quadlet) []Command {
+func HandleStop(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	commands := []Command{}
 
 	// Reverse order for safe stopping
 	for i := len(quadlets) - 1; i >= 0; i-- {
 		q := quadlets[i]
-		cmd := generateStopCommand(q)
+		cmd := generateStopCommand(quadctl, q)
 		if len(cmd) > 0 {
 			c := NewCommand(fmt.Sprintf("Stopping %s %s", q.Type, q.ID))
 			c.Cmd = cmd
@@ -176,183 +214,7 @@ func HandleStop(quadlets []*util.Quadlet) []Command {
 	return commands
 }
 
-func HandleSystemdReload(quadctl *util.Quadctl) []Command {
-	var buf bytes.Buffer
-	data := map[string]string{}
-	if !quadctl.IsRootful {
-		data["user"] = "--user"
-	}
-	err := quadctl.SystemdReloadTmpl.Execute(&buf, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing systemd reload template: %v\n", err)
-		os.Exit(1)
-	}
-	command := util.ParseFields(buf.String())
-	cmd := NewCommand("Reloading systemd")
-	cmd.Cmd = command
-	return []Command{cmd}
-}
-
-func HandleSystemdStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
-	//Ideally, call handleInstall if needed. How to check if the required systemd services are installed?
-	/*
-		❯ sudo podman quadlet list
-		NAME                   UNIT NAME                    PATH ON DISK                                           STATUS      APPLICATION
-		homebox-app.container  homebox-app.service          /etc/containers/systemd/homebox/homebox-app.container  Not loaded
-		homebox-data.volume    homebox-data-volume.service  /etc/containers/systemd/homebox/homebox-data.volume    Not loaded
-		homebox.pod            homebox-pod.service          /etc/containers/systemd/homebox/homebox.pod            Not loaded
-	*/
-
-	commands := []Command{}
-
-	// Create if not existing
-	info, _ := listSystemdInstalledQuadlets(quadlets)
-	if len(info) < len(quadlets) {
-		//fmt.Printf("installed count: %d, quadlet count: %d\n", len(info), len(quadlets))
-		cmd := HandleSystemdCreate(quadctl, quadlets)
-		commands = append(commands, cmd...)
-	} else {
-		// Reload quadlet definitions if not done as part of create step
-		cmd := HandleSystemdReload(quadctl)
-		commands = append(commands, cmd...)
-	}
-
-	// Stop if already running (podman ps -a only returns a list if systemd services are running. Once stopped, it returns empty.)
-	if info, err := getContainerPS(quadlets); err == nil && len(info) > 0 {
-		cmd := HandleSystemdStop(quadctl, quadlets, false)
-		commands = append(commands, cmd...)
-	}
-
-	// Start the systemd services
-	var buf bytes.Buffer
-	data := map[string]string{}
-	if !quadctl.IsRootful {
-		data["user"] = "--user"
-	}
-
-	err := quadctl.SystemdStartTmpl.Execute(&buf, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing systemd start template: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Only start the pod and any loose containers
-	for _, q := range quadlets {
-		if q.Type == ".container" && q.ParentPod == "" || q.Type == ".pod" {
-			args := util.ParseFields(buf.String())
-			args = append(args, q.ServiceName)
-			cmd := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
-			cmd.Cmd = args
-			commands = append(commands, cmd)
-		}
-		// For networks and volumes, we rely on the fact that systemd will start them automatically when the containers that depend on them are started.
-	}
-	return commands
-}
-
-func HandleSystemdStop(quadctl *util.Quadctl, quadlets []*util.Quadlet, stopNetAndVol bool) []Command {
-
-	commands := []Command{}
-
-	// Stop the systemd services
-	var buf bytes.Buffer
-	data := map[string]string{}
-	if !quadctl.IsRootful {
-		data["user"] = "--user"
-	}
-	err := quadctl.SystemdStopTmpl.Execute(&buf, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing systemd stop template: %v\n", err)
-		os.Exit(1)
-	}
-
-	for _, q := range quadlets {
-		var args []string
-		// Stop a container directly only if it is not part of a pod.
-		if q.Type == ".container" && q.ParentPod == "" {
-			args = util.ParseFields(buf.String())
-			args = append(args, q.ServiceName)
-		} else if q.Type == ".pod" {
-			// Stop the pod and any related containers.
-			args = util.ParseFields(buf.String())
-			args = append(args, q.ServiceName)
-		} else {
-			// Stop network and volume services (Only used when called by handleUninstall. Ensures cleanup of volumes and networks).
-			if stopNetAndVol && (q.Type == ".network" || q.Type == ".volume") {
-				args = util.ParseFields(buf.String())
-				args = append(args, q.ServiceName)
-			}
-		}
-		if len(args) == 0 {
-			continue
-		}
-		cmd := NewCommand(fmt.Sprintf("Systemd stopping %s %s", q.Type, q.ID))
-		cmd.Cmd = args
-		commands = append(commands, cmd)
-	}
-	return commands
-}
-
-func HandleSystemdStatus(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
-
-	if quadctl.IsLongStatus {
-		commands := []Command{}
-
-		var buf bytes.Buffer
-		data := map[string]string{}
-		if !quadctl.IsRootful {
-			data["user"] = "--user"
-		}
-		err := quadctl.SystemdStatusTmpl.Execute(&buf, data)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing systemd status template: %v\n", err)
-			os.Exit(1)
-		}
-		args := util.ParseFields(buf.String())
-		for _, q := range quadlets {
-			args = append(args, q.ServiceName)
-		}
-		if quadctl.IsPrintOnly {
-			c := NewCommand("Getting systemd status")
-			c.Cmd = args
-			commands = append(commands, c)
-		} else {
-			runCommand(args)
-		}
-		return commands
-	} else {
-		displayListOfSystemdInstalledQuadlets(quadlets)
-		return []Command{}
-	}
-}
-
-func HandleSystemdLogs(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
-
-	commands := []Command{}
-
-	var buf bytes.Buffer
-	data := map[string]string{}
-	if !quadctl.IsRootful {
-		data["user"] = "--user"
-	}
-	err := quadctl.SystemdLogsTmpl.Execute(&buf, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing systemd logs: %v\n", err)
-		os.Exit(1)
-	}
-
-	cmd := util.ParseFields(buf.String())
-	if quadctl.IsPrintOnly {
-		c := NewCommand("Opening systemd logs")
-		c.Cmd = cmd
-		commands = append(commands, c)
-	} else {
-		runCommand(cmd)
-	}
-	return commands
-}
-
-func HandleRemove(quadlets []*util.Quadlet) []Command {
+func HandleRemove(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 
 	commands := []Command{}
 
@@ -367,6 +229,12 @@ func HandleRemove(quadlets []*util.Quadlet) []Command {
 
 		rmCmd := []string{"podman"}
 		switch resType {
+		case ".kube":
+			if quadctl.IsRemoveVolumes || quadctl.IsRemoveNetworks || q.Sections["Kube"]["KubeDownForce"][0] == "true" {
+				rmCmd = append(rmCmd, "play", "kube", "--down", "--force", q.KubernetesYaml)
+			} else {
+				rmCmd = append(rmCmd, "play", "kube", "--down", q.KubernetesYaml)
+			}
 		case ".container":
 			rmCmd = append(rmCmd, "container", "rm", "-f", resName)
 		case ".pod":
@@ -382,32 +250,6 @@ func HandleRemove(quadlets []*util.Quadlet) []Command {
 		commands = append(commands, c)
 	}
 	return commands
-}
-
-func HandlePull(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
-
-	commands := []Command{}
-
-	images := make(map[string]bool)
-	for _, q := range quadlets {
-		if q.Type == ".container" {
-			if imgSec, ok := q.Sections["Container"]; ok {
-				if imgList, ok := imgSec["Image"]; ok && len(imgList) > 0 {
-					images[imgList[0]] = true
-				}
-			}
-		}
-	}
-
-	for img := range images {
-		//fmt.Printf("=> Pulling image: %s\n", img)
-		c := NewCommand(fmt.Sprintf("Pulling image %s", img))
-		c.Cmd = []string{"podman", "pull", img}
-		commands = append(commands, c)
-	}
-
-	return commands
-	//RunCommands(quadctl, commands)
 }
 
 func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
@@ -590,6 +432,104 @@ func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 	return commands
 }
 
+func HandleSystemdStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
+	//Ideally, call handleInstall if needed. How to check if the required systemd services are installed?
+	/*
+		❯ sudo podman quadlet list
+		NAME                   UNIT NAME                    PATH ON DISK                                           STATUS      APPLICATION
+		homebox-app.container  homebox-app.service          /etc/containers/systemd/homebox/homebox-app.container  Not loaded
+		homebox-data.volume    homebox-data-volume.service  /etc/containers/systemd/homebox/homebox-data.volume    Not loaded
+		homebox.pod            homebox-pod.service          /etc/containers/systemd/homebox/homebox.pod            Not loaded
+	*/
+
+	commands := []Command{}
+
+	// Create if not existing
+	info, _ := listSystemdInstalledQuadlets(quadlets)
+	if len(info) < len(quadlets) {
+		//fmt.Printf("installed count: %d, quadlet count: %d\n", len(info), len(quadlets))
+		cmd := HandleSystemdCreate(quadctl, quadlets)
+		commands = append(commands, cmd...)
+	} else {
+		// Reload quadlet definitions if not done as part of create step
+		cmd := HandleSystemdReload(quadctl)
+		commands = append(commands, cmd...)
+	}
+
+	// Stop if already running (podman ps -a only returns a list if systemd services are running. Once stopped, it returns empty.)
+	if info, err := getContainerPS(quadlets); err == nil && len(info) > 0 {
+		cmd := HandleSystemdStop(quadctl, quadlets, false)
+		commands = append(commands, cmd...)
+	}
+
+	// Start the systemd services
+	var buf bytes.Buffer
+	data := map[string]string{}
+	if !quadctl.IsRootful {
+		data["user"] = "--user"
+	}
+
+	err := quadctl.SystemdStartTmpl.Execute(&buf, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error executing systemd start template: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Only start the pod and any loose containers
+	for _, q := range quadlets {
+		if (q.Type == ".container" && q.ParentPod == "") || q.Type == ".pod" || q.Type == ".kube" {
+			args := util.ParseFields(buf.String())
+			args = append(args, q.ServiceName)
+			cmd := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
+			cmd.Cmd = args
+			commands = append(commands, cmd)
+		}
+
+		// For networks and volumes, we rely on the fact that systemd will start them automatically when the containers that depend on them are started.
+	}
+	return commands
+}
+
+func HandleSystemdStop(quadctl *util.Quadctl, quadlets []*util.Quadlet, stopNetAndVol bool) []Command {
+
+	commands := []Command{}
+
+	// Stop the systemd services
+	var buf bytes.Buffer
+	data := map[string]string{}
+	if !quadctl.IsRootful {
+		data["user"] = "--user"
+	}
+	err := quadctl.SystemdStopTmpl.Execute(&buf, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error executing systemd stop template: %v\n", err)
+		os.Exit(1)
+	}
+
+	for _, q := range quadlets {
+		var args []string
+		// Stop a container directly only if it is not part of a pod.
+		if (q.Type == ".container" && q.ParentPod == "") || q.Type == ".pod" || q.Type == ".kube" {
+			// Stop the pod and any related containers.
+			args = util.ParseFields(buf.String())
+			args = append(args, q.ServiceName)
+		} else {
+			// Stop network and volume services (Only used when called by handleUninstall. Ensures cleanup of volumes and networks).
+			if stopNetAndVol && (q.Type == ".network" || q.Type == ".volume") {
+				args = util.ParseFields(buf.String())
+				args = append(args, q.ServiceName)
+			}
+		}
+		if len(args) == 0 {
+			continue
+		}
+		cmd := NewCommand(fmt.Sprintf("Systemd stopping %s %s", q.Type, q.ID))
+		cmd.Cmd = args
+		commands = append(commands, cmd)
+	}
+	return commands
+}
+
 func HandleSystemdRemove(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	var targetDir string
 	if quadctl.IsRootful {
@@ -731,6 +671,82 @@ func HandleSystemdRemove(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 	return commands
 }
 
+func HandleSystemdStatus(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
+
+	if quadctl.IsLongStatus {
+		commands := []Command{}
+
+		var buf bytes.Buffer
+		data := map[string]string{}
+		if !quadctl.IsRootful {
+			data["user"] = "--user"
+		}
+		err := quadctl.SystemdStatusTmpl.Execute(&buf, data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error executing systemd status template: %v\n", err)
+			os.Exit(1)
+		}
+		args := util.ParseFields(buf.String())
+		for _, q := range quadlets {
+			args = append(args, q.ServiceName)
+		}
+		if quadctl.IsPrintOnly {
+			c := NewCommand("Getting systemd status")
+			c.Cmd = args
+			commands = append(commands, c)
+		} else {
+			runCommand(args)
+		}
+		return commands
+	} else {
+		displayListOfSystemdInstalledQuadlets(quadlets)
+		return []Command{}
+	}
+}
+
+func HandleSystemdLogs(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
+
+	commands := []Command{}
+
+	var buf bytes.Buffer
+	data := map[string]string{}
+	if !quadctl.IsRootful {
+		data["user"] = "--user"
+	}
+	err := quadctl.SystemdLogsTmpl.Execute(&buf, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error executing systemd logs: %v\n", err)
+		os.Exit(1)
+	}
+
+	cmd := util.ParseFields(buf.String())
+	if quadctl.IsPrintOnly {
+		c := NewCommand("Opening systemd logs")
+		c.Cmd = cmd
+		commands = append(commands, c)
+	} else {
+		runCommand(cmd)
+	}
+	return commands
+}
+
+func HandleSystemdReload(quadctl *util.Quadctl) []Command {
+	var buf bytes.Buffer
+	data := map[string]string{}
+	if !quadctl.IsRootful {
+		data["user"] = "--user"
+	}
+	err := quadctl.SystemdReloadTmpl.Execute(&buf, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error executing systemd reload template: %v\n", err)
+		os.Exit(1)
+	}
+	command := util.ParseFields(buf.String())
+	cmd := NewCommand("Reloading systemd")
+	cmd.Cmd = command
+	return []Command{cmd}
+}
+
 func HandlePS(quadctl *util.Quadctl, quadlets []*util.Quadlet) {
 
 	psInfo, err := getContainerPS(quadlets)
@@ -854,6 +870,28 @@ func HandleImages(quadlets []*util.Quadlet) {
 						}
 					}
 				}
+			} else if q.Type == ".kube" {
+				for _, res := range q.KubeResources {
+					if res["type"] == "container" {
+						name := strings.TrimSpace(res["image"].(string)) // IMAGE ID from quadlet file
+						if len(name) < 12 {
+							continue
+						}
+						cmd[4] = "reference=" + name
+						output, err := runCommandCapture(cmd)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Error fetching image info for .kube %s container %s: %v\n", q.ID, res["name"].(string), err)
+							continue
+						}
+						lines := strings.Split(output, "\n")
+						for _, line := range lines {
+							parts := strings.Split(line, "|")
+							if len(parts) >= 5 {
+								imageInfo = append(imageInfo, parts)
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -873,6 +911,48 @@ func HandleImages(quadlets []*util.Quadlet) {
 	}
 	t.SetStyle(table.StyleColoredYellowWhiteOnBlack)
 	t.Render()
+}
+
+func HandleLogs(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
+
+	var commands []Command
+
+	cmd := []string{"podman", "logs"}
+	var containerName string
+
+	// Fetch image info for each container
+	psInfo, err := getContainerPS(quadlets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return commands
+	}
+
+	if len(psInfo) > 0 {
+		if len(psInfo) == 1 {
+			containerName = psInfo[0][1]
+		} else {
+			names := []string{}
+			for _, info := range psInfo {
+				names = append(names, info[1])
+			}
+			selected, err := util.SelectFromList(names)
+			if err != nil {
+				fmt.Printf("Error getting container info: %v\n", err)
+				os.Exit(1)
+			}
+			containerName = selected
+		}
+		cmd = append(cmd, containerName)
+	}
+
+	if quadctl.IsPrintOnly {
+		c := NewCommand(fmt.Sprintf("Opening podman logs for %s\n", containerName))
+		c.Cmd = cmd
+		commands = append(commands, c)
+	} else {
+		runCommand(cmd)
+	}
+	return commands
 }
 
 func HandleList(quadctl *util.Quadctl) error {
@@ -978,16 +1058,6 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 		if sec == "Install" || sec == "Unit" {
 			warnings = append(warnings, fmt.Sprintf("Ignoring [%s] section (Systemd specific)", sec))
 		}
-	}
-
-	// Helper: Get raw PodmanArgs securely
-	getRawPodmanArgs := func(section map[string][]string) []string {
-		var args []string
-		for _, argStr := range section["PodmanArgs"] {
-			// Use Fields to parse space-separated flags
-			args = append(args, util.ParseFields(argStr)...)
-		}
-		return args
 	}
 
 	switch q.Type {
@@ -1200,10 +1270,50 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 }
 
 // generateStartupCommand creates necessary 'start' commands based on existence.
-func generateStartupCommand(q *util.Quadlet) ([]string, []string) {
+func generateStartupCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []string) {
 	cmd := []string{}
 	warnings := []string{}
 	resName := q.ID
+
+	//Kube is a special case. kube play is create and start in one step, so we generate the play command here in "start" phase.
+	if q.Type == ".kube" {
+		//Get the schema for the kube type and use the PodmanTemplateParsed to format the podman option.
+		options, ok := quadctl.QuadletSchemas["kube"]
+		if !ok {
+			warnings = append(warnings, "No kube schema found.")
+			return cmd, warnings
+		}
+
+		cmd = append(cmd, "podman", "play", "kube")
+		fmt.Printf("generateStartupCommand(%s): %v\n", q.ID, cmd)
+		if kubeSec, ok := q.Sections["Kube"]; ok {
+			cmd = append(cmd, getRawPodmanArgs(kubeSec)...)
+			for k, vals := range kubeSec {
+				for _, v := range vals {
+					switch k {
+					case "Yaml":
+						continue // Yaml is parsed ahead of time and is appended at the end as the file argument for podman play kube
+					case "ServiceName":
+						continue // ServiceName is for systemd and does not affect Podman CLI
+					case "PodmanArgs": // Handled above
+						continue
+					default:
+						podmanOpt, err := util.QuadletOptionToPodman("kube", options, k, v)
+						if err != nil {
+							warnings = append(warnings, err.Error())
+							continue
+						}
+						// Use Fields to parse space-separated flags
+						cmd = append(cmd, util.ParseFields(podmanOpt)...)
+					}
+				}
+			}
+		}
+		cmd = append(cmd, q.KubernetesYaml)
+		return cmd, warnings
+	}
+
+	// Other startable types are pod and container
 	if q.Type == ".container" {
 		resName = q.GeneratedNames["container"]
 	}
@@ -1230,6 +1340,12 @@ func generateStartupCommand(q *util.Quadlet) ([]string, []string) {
 
 // generateStartupCommand creates necessary 'start' commands based on existence.
 func generateRunCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []string) {
+
+	if q.Type == ".kube" {
+		// For kube type, just reuse the generateStartupCommand for kube types.
+		return generateStartupCommand(quadctl, q)
+	}
+
 	createCmd, warnings := generateCreateCommand(quadctl, q)
 	runCmd := []string{"podman", "run"}
 	runCmd = append(runCmd, createCmd[3:]...) // Replace 'podman container create' with 'podman run'
@@ -1237,145 +1353,7 @@ func generateRunCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []str
 	return runCmd, warnings
 }
 
-/*
-// NOT NEEDED. Podman already monitors health of containers and can kill it if reports unhealthy based on healthcheck options.
-func generateStartupMonitorCommand(quadctl *util.Quadctl, q *util.Quadlet) *Command {
-
-	var c *Command
-	if q.Type != ".container" {
-		fmt.Println("Not a .container...")
-		return c
-	}
-	contSec, _ := q.Sections["Container"]
-	if contSec["Notify"] == nil || !strings.Contains(strings.ToLower(contSec["Notify"][0]), "healthy") {
-		fmt.Println("Notify=healthy not found in [Container] section ...")
-		return c
-	}
-
-	cmd := NewCommand(fmt.Sprintf("Monitoring startup of %s", q.ID))
-	c = &cmd
-	timeoutSecs := 30
-	intervalSecs := 5
-	healthStartupPeriodSecs := 0
-	retries := 3
-	var err error
-
-	if contSec["HealthStartupCmd"] != nil {
-
-		if contSec["HealthStartupTimeout"] != nil {
-			timeoutSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupTimeout"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupTimeout for %s: %v\n  Defaulting to 30 seconds.", q.ID, err))
-				timeoutSecs = 30
-			}
-		}
-
-		if contSec["HealthStartupInterval"] != nil {
-			intervalSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupInterval"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupInterval for %s: %v\n  Defaulting to 5 seconds.", q.ID, err))
-				intervalSecs = 5
-			}
-		}
-
-		if contSec["HealthStartupRetries"] != nil {
-			retries, err = strconv.Atoi(contSec["HealthStartupRetries"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupRetries for %s: %v\n  Defaulting to 3.", q.ID, err))
-				retries = 3
-			}
-		}
-
-		if contSec["HealthStartupPeriod"] != nil {
-			healthStartupPeriodSecs, err = util.ParseDurationToSeconds(contSec["HealthStartupPeriod"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthStartupPeriod for %s: %v\n  Defaulting to 0 seconds.", q.ID, err))
-				healthStartupPeriodSecs = 0
-			}
-		}
-	}
-
-	if contSec["HealthCmd"] == nil {
-		if contSec["HealthTimeout"] != nil {
-			timeoutSecs, err = util.ParseDurationToSeconds(contSec["HealthTimeout"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthTimeout for %s: %v\n  Defaulting to 30 seconds.", q.ID, err))
-				timeoutSecs = 30
-			}
-		}
-
-		if contSec["HealthInterval"] != nil {
-			intervalSecs, err = util.ParseDurationToSeconds(contSec["HealthInterval"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthInterval for %s: %v\n  Defaulting to 5 seconds.", q.ID, err))
-				intervalSecs = 5
-			}
-		}
-
-		if contSec["HealthRetries"] != nil {
-			retries, err = strconv.Atoi(contSec["HealthRetries"][0])
-			if err != nil {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("Error parsing HealthRetries for %s: %v\n  Defaulting to 3.", q.ID, err))
-				retries = 3
-			}
-		}
-	}
-
-	totalTimeout := time.Duration(healthStartupPeriodSecs+(timeoutSecs*retries)+(intervalSecs*retries)) * time.Second
-
-	c.Label = fmt.Sprintf("Monitoring startup of %s (Timeout: %v)", q.ID, totalTimeout)
-
-	funcs := []func(){}
-	//c.PreFn = func(c *Command) {}
-	//c.PostFn = func(c *Command) {}
-
-	f := func() {
-		expiration := time.Now().Add(totalTimeout)
-
-		for time.Now().Before(expiration) {
-			if info, err := getContainerPS([]*util.Quadlet{q}); info != nil && err == nil {
-				if strings.Contains(strings.ToLower(info[0][3]), "healthy") {
-					if quadctl.IsVerbose {
-						fmt.Printf("  Success: %s is healthy! Current status: %s\n", q.ID, info[0][3])
-					}
-					return
-				} else {
-					if quadctl.IsVerbose {
-						fmt.Printf("  Warning: %s started but is not healthy. Current status: %s\n", q.ID, info[0][3])
-					}
-					time.Sleep(1 * time.Second)
-					continue
-				}
-			} else if err != nil {
-				fmt.Printf("  Warning: Failed to get status for %s: %v\n", q.ID, err)
-				os.Exit(1)
-			}
-		}
-		fmt.Printf("Error: %s failed to reach healthy state within the expected time.\n", q.ID)
-		stopCmd := generateStopCommand(q)
-		if len(stopCmd) > 0 {
-			fmt.Printf("Attempting to stop %s...\n", q.ID)
-			if err := runCommandSilently(stopCmd); err != nil {
-				fmt.Printf("Failed to stop %s: %v\n", q.ID, err)
-			} else {
-				fmt.Printf("%s stopped successfully.\n", q.ID)
-			}
-		}
-		os.Exit(1)
-	}
-
-	funcs = append(funcs, f)
-	// Custom run function that will, when executed by runCommands(), execute the anonymous functions created above.
-	c.RunFn = func(c *Command) {
-		for _, f := range funcs {
-			f()
-		}
-	}
-	return c
-}
-*/
-
-func generateStopCommand(q *util.Quadlet) []string {
+func generateStopCommand(quadctl *util.Quadctl, q *util.Quadlet) []string {
 	cmd := []string{}
 	resName := q.ID
 	if q.Type == ".container" {
@@ -1383,6 +1361,12 @@ func generateStopCommand(q *util.Quadlet) []string {
 	}
 
 	switch q.Type {
+	case ".kube":
+		if quadctl.IsRemoveVolumes || quadctl.IsRemoveNetworks || q.Sections["Kube"]["KubeDownForce"][0] == "true" {
+			cmd = append(cmd, []string{"podman", "play", "kube", "--down", "--force", q.KubernetesYaml}...)
+		} else {
+			cmd = append(cmd, []string{"podman", "play", "kube", "--down", q.KubernetesYaml}...)
+		}
 	case ".pod":
 		cmd = append(cmd, []string{"podman", "pod", "stop", resName}...)
 	case ".container":
@@ -1392,6 +1376,16 @@ func generateStopCommand(q *util.Quadlet) []string {
 		}
 	}
 	return cmd
+}
+
+// Helper: Get raw PodmanArgs securely
+func getRawPodmanArgs(section map[string][]string) []string {
+	var args []string
+	for _, argStr := range section["PodmanArgs"] {
+		// Use Fields to parse space-separated flags
+		args = append(args, util.ParseFields(argStr)...)
+	}
+	return args
 }
 
 func resourceExists(qType string, name string) bool {
@@ -1438,10 +1432,6 @@ func listSystemdInstalledQuadlets(quadlets []*util.Quadlet) ([][]string, error) 
 	return info, nil
 }
 
-/*
-CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES
-podman ps -a --format "{{.ID}},{{.Names}},{{.PodName}},{{.State}},{{.Ports}},{{.Image}},{{.Created}}"
-*/
 func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
 	cmd := []string{"podman", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.PodName}}|{{.Status}}|{{.Ports}}|{{.Image}}|{{.Created}}"}
 	output, err := runCommandCapture(cmd)
@@ -1462,6 +1452,14 @@ func getContainerPS(quadlets []*util.Quadlet) ([][]string, error) {
 			if q.Type == ".container" && strings.HasSuffix(parts[1], q.GeneratedNames["container"]) || (q.ParentPod != "" && strings.HasSuffix(parts[2], q.GeneratedNames["pod_name"])) {
 				psInfo = append(psInfo, parts)
 				break
+			}
+			if q.Type == ".kube" {
+				for _, res := range q.KubeResources {
+					if res["type"] == "container" && strings.HasSuffix(parts[1], res["name"].(string)) || (res["pod"] != nil && strings.HasSuffix(parts[2], res["pod"].(string))) {
+						psInfo = append(psInfo, parts)
+						break
+					}
+				}
 			}
 		}
 	}

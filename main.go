@@ -57,8 +57,7 @@ func main() {
 		if quadctl.IsSystemd {
 			commands = HandleSystemdLogs(quadctl, quadlets)
 		} else {
-			fmt.Println("To view podman logs, use 'podman logs <container name or id>'")
-			os.Exit(0)
+			commands = HandleLogs(quadctl, quadlets)
 		}
 	case "images":
 		HandleImages(quadlets)
@@ -88,13 +87,13 @@ func main() {
 		if quadctl.IsSystemd {
 			commands = HandleSystemdStop(quadctl, quadlets, false)
 		} else {
-			commands = HandleStop(quadlets)
+			commands = HandleStop(quadctl, quadlets)
 		}
 	case "remove", "rm":
 		if quadctl.IsSystemd {
 			commands = HandleSystemdRemove(quadctl, quadlets)
 		} else {
-			commands = HandleRemove(quadlets)
+			commands = HandleRemove(quadctl, quadlets)
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", quadctl.Subcommand)

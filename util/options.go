@@ -11,6 +11,7 @@ func GetQuadletSchemas() map[string]map[string]SchemaOption {
 	schemas["network"] = GetQuadletOptionsMap("network")
 	schemas["container"] = GetQuadletOptionsMap("container")
 	schemas["pod"] = GetQuadletOptionsMap("pod")
+	schemas["kube"] = GetQuadletOptionsMap("kube")
 	return schemas
 }
 

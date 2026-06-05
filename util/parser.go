@@ -20,6 +20,7 @@ var (
 		".pod":       true,
 		".network":   true,
 		".volume":    true,
+		".kube":      true,
 	}
 )
 
@@ -61,11 +62,13 @@ type Quadlet struct {
 	Filepath       string
 	Type           string // .container, .pod, .network, .volume
 	Sections       map[string]map[string][]string
-	Deps           []string          // IDs of other quadlets that must run first
-	ParentPod      string            // If this is a container, the ID of its parent pod
-	RestartPolicy  string            // [Service] Restart=
-	GeneratedNames map[string]string // Key: name type, Value: specific name (useful for ps filters)
-	ServiceName    string            // The name of the systemd unit (from quadlet file or default to <id>-<type>)
+	Deps           []string                 // IDs of other quadlets that must run first
+	ParentPod      string                   // If this is a container, the ID of its parent pod
+	RestartPolicy  string                   // [Service] Restart=
+	GeneratedNames map[string]string        // Key: name type, Value: specific name (useful for ps filters)
+	ServiceName    string                   // The name of the systemd unit (from quadlet file or default to <id>-<type>)
+	KubernetesYaml string                   // If specified, the path to the Kubernetes YAML file for this quadlet
+	KubeResources  []map[string]interface{} //type, name, image for any pod or container defined in k8s yaml
 }
 
 type Option struct {
@@ -202,7 +205,7 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 		}
 	}
 
-	// Below will process all .container, .pod, .volume, .network files
+	// Below will process all .container, .pod, .volume, .network, .kube files
 	// If there were .quadlets files, all were extracted to a temp directory and all other files and subdirectories were copied to the temp directory
 
 	for _, f := range files {
@@ -364,9 +367,14 @@ func parseQuadlet(path string) (*Quadlet, error) {
 		if len(vals) > 0 {
 			confServiceName = vals[0]
 		}
+	case ".kube":
+		vals := q.Sections["Kube"]["ServiceName"]
+		if len(vals) > 0 {
+			confServiceName = vals[0]
+		}
 	}
 	if confServiceName == "" {
-		if q.Type == ".container" {
+		if q.Type == ".container" || q.Type == ".kube" {
 			q.ServiceName = id
 		} else {
 			q.ServiceName = id + "-" + strings.TrimPrefix(q.Type, ".")
@@ -407,6 +415,35 @@ func parseQuadlet(path string) (*Quadlet, error) {
 		if val, ok := svcSec["Restart"]; ok && len(val) > 0 {
 			q.RestartPolicy = strings.ToLower(val[0])
 		}
+	}
+
+	if kubeSec, ok := q.Sections["Kube"]; ok {
+		if val, ok := kubeSec["Yaml"]; ok && len(val) > 0 {
+			yamlPath := val[0]
+			if filepath.IsAbs(yamlPath) {
+				info, err := os.Stat(yamlPath)
+				if err != nil || info.IsDir() {
+					fmt.Printf("Invalid YAML file: %s", yamlPath)
+					os.Exit(1)
+				}
+			} else {
+				dir := filepath.Dir(q.Filepath)
+				joinedPath := filepath.Join(dir, yamlPath)
+				info, err := os.Stat(joinedPath)
+				if err != nil || info.IsDir() {
+					fmt.Printf("Invalid YAML file: %s", joinedPath)
+					os.Exit(1)
+				}
+				yamlPath = joinedPath
+			}
+			q.KubernetesYaml = yamlPath
+		}
+		resources, err := readK8sYaml(q.KubernetesYaml)
+		if err != nil {
+			fmt.Printf("Failed to read K8s yaml file: %v\n", err)
+			os.Exit(1)
+		}
+		q.KubeResources = resources
 	}
 
 	return q, nil
@@ -708,6 +745,7 @@ func readK8sYaml(yamlPath string) ([]map[string]interface{}, error) {
 		os.Exit(1)
 	}
 	pod["type"] = "pod"
+	//pod["name"] comes as part of $.metadata
 	resources = append(resources, pod)
 
 	var containers []map[string]interface{}
@@ -722,8 +760,11 @@ func readK8sYaml(yamlPath string) ([]map[string]interface{}, error) {
 	}
 	for i := range containers {
 		containers[i]["type"] = "container"
+		containers[i]["pod"] = pod["name"]
 	}
 	resources = append(resources, containers...)
+
+	//fmt.Printf("K8s:\n%v\n", resources)
 
 	return resources, nil
 }
