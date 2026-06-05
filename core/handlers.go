@@ -125,7 +125,7 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 		// Use generateStartupCommands
 		cmd, warns := generateStartupCommand(quadctl, q)
 
-		fmt.Printf("Command for quadlet %s is %v\n", q.ID, cmd)
+		//fmt.Printf("Command for quadlet %s is %v\n", q.ID, cmd)
 
 		if len(cmd) > 0 {
 			c := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
