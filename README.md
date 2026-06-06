@@ -98,9 +98,71 @@ Requirements:
 
 ```
 
+## Systemd-style INI files vs YAML
+
+Systemd is a bit mysterious and intimidating to a lot of folks. Reliably orchestrating a web of inter-dependent services is a complex task (cf. Kubernetes), so some complexity is to be expected, but because of that complexity, a lot of folks have a knee-jerk reaction to writing Quadlet files (ie. systemd-style) files and point to how easy and popular YAML is with tools like Compose and Kubernetes. But Quadlet files are just INI files ... simple key-value in sections. Yes, there can be bits in there that are for systemd, but likely just boilerplate Service and Install sections consisting of one parameter each to tell systemd about your restart and start on boot policies. Here's a Compose file for Jellyfin and then an equivalent .container quadlet. 
+
+compose.yaml:
+
+```
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    user: "1000:1000" 
+    network_mode: "host" 
+    restart: "unless-stopped"
+    volumes:
+      - ./config:/config:z
+      - ./cache:/cache:z
+      - /path/to/media:/media:ro,z
+```
+
+jellyfin.container:
+
+```
+[Container]
+ContainerName=jellyfin
+Image=docker.io/jellyfin/jellyfin:latest
+User=1000:1000
+Network=host
+Volume=/tmp/config:/config:z
+Volume=/tmp/cache:/cache:z
+Volume=/mnt/media:/media:ro,z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+In YAML, the indentation, spaces, dashes and quotes are all significant and can potentially lead to issues. Both are pretty easy to follow, but for me, the INI file looks simpler and with that additional boilerplate (Service and Install) you get the benefit of freely operating with or without systemd with just one flag (-s) to switch between them. To make the compose file run under systemd, you'll need to manually write an additional systemd unit file to automate the lifecycle of your stack, taking into account startup dependency on the docker daemon, place the new file in /etc/systemd/system, reload systemd, enable and then start your service.  
+
 ## A note on working with .kube files
 
-A .kube quadlet enables the use of a Kubernetes deployment yaml file to create and manage pods, containers and other resources. The .kube file is specific to running `podman kube play` under systemd. However, since this is a tool supporting the use of Quadlets with or without systemd, a minimal .kube quadlet file is required by quadctl along with the .yaml file. This ensures consistent behavior when using any of the supported quadlet types under both systemd and podman. When run under systemd, a single systemd service (name matches the .kube file without the extension, or the ServiceName if specified in the .kube file) is created that calls `podman kube play`. That service will appear in response to `quadctl -s status` but the actual pods and containers will be seen in response to `quadctl ps`, `quadctl stats`, etc.
+A .kube quadlet enables the use of a Kubernetes deployment yaml file to create and manage pods, containers and other resources. The .kube file is specific to running `podman kube play` under systemd. However, since this is a tool supporting the use of Quadlets with or without systemd, a minimal .kube quadlet file is required by quadctl along with the .yaml file. For example:
+
+Homebox directory: 
+
+```
+   ├─ homebox
+   │  ├─ deployment.yaml
+   │  ╰─ homebox.kube
+```
+
+homebox.kube file:
+
+```
+[Kube]
+Yaml=./deployment.yaml
+
+[Install]
+# Start by default on boot
+WantedBy=default.target
+```
+
+This ensures consistent behavior when using any of the supported quadlet types under both systemd and podman. When run under systemd, a single systemd service (name matches the .kube file without the extension, or the ServiceName if specified in the .kube file) is created that calls `podman kube play`. That service will appear in response to `quadctl -s status` but the actual pods and containers will be seen in response to `quadctl ps`, `quadctl stats`, etc.
 
 While `podman kube play` handles most of the work, quadctl continues to provide a user-friendly workflow. Quadctl gives you a consistent CLI whether under systemd or podman, filters the output of ps, stats, status, images, logs, etc., handles user and root pathing for systemd installation and removal, uses the convenient quadlets.src.path enabling you to list and manage quadlets from any location on the host system.   
 
