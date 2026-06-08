@@ -308,8 +308,13 @@ func PrintLogsUsage() {
 
 func ProcessSubcommand(quadctl *Quadctl) {
 	quadctl.Subcommand = strings.ToLower(flag.Arg(0))
-	flagSets[quadctl.Subcommand].Parse(flag.Args()[1:])
-	quadctl.SearchDir = getSearchDir(quadctl, flagSets[quadctl.Subcommand].Arg(0))
+	if flagSet, ok := flagSets[quadctl.Subcommand]; ok {
+		flagSet.Parse(flag.Args()[1:])
+		quadctl.SearchDir = getSearchDir(quadctl, flagSets[quadctl.Subcommand].Arg(0))
+	} else {
+		fmt.Fprintf(os.Stderr, "Invalid command: %s\n", quadctl.Subcommand)
+		os.Exit(1)
+	}
 }
 
 func getSearchDir(quadctl *Quadctl, path string) string {
@@ -322,24 +327,25 @@ func getSearchDir(quadctl *Quadctl, path string) string {
 		os.Exit(1)
 	}
 	// If a path is specified, determine if relative to CWD or quadlet.src.path
-	//if flag.NArg() > 1 {
 	if path != "" {
 		// If os.Stat returns no error, the path is absolute or valid relative to the current working directory
-		if info, err := os.Stat(path); err == nil {
+		info, err := os.Stat(path)
+		if err == nil {
 			//if a file was specified, get parent directory of the file
 			if !info.IsDir() {
 				dir = filepath.Dir(path)
 			} else {
 				dir, _ = filepath.Abs(path)
 			}
-			// Otherwise, look for specified directory path relative to the quadlets path
 		} else {
+			// Otherwise, look for specified directory path relative to the quadlets path
 			dir = filepath.Join(quadctl.QuadletSrcPath, path)
 			// If the path is not found relative to the quadlets path or is not a directory, it's an error
-			if info, err := os.Stat(dir); err == nil {
+			info, err = os.Stat(dir)
+			if err == nil {
 				//if a file was specified, get parent directory of the file
 				if !info.IsDir() {
-					dir = filepath.Dir(path)
+					dir = filepath.Dir(dir)
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "Error: %s not found\n", path)

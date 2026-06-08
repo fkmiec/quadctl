@@ -1140,7 +1140,11 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 			return cmd, warnings
 		}
 
-		cmd = append(cmd, "podman", "pod", "create", "--name", q.ID)
+		podName := q.ID
+		if name, ok := q.GeneratedNames["pod_name"]; ok {
+			podName = name
+		}
+		cmd = append(cmd, "podman", "pod", "create", "--name", podName)
 		if podSec, ok := q.Sections["Pod"]; ok {
 			cmd = append(cmd, getRawPodmanArgs(podSec)...)
 			for k, vals := range podSec {
@@ -1149,6 +1153,7 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 					case "ServiceName":
 						continue // ServiceName is for systemd and does not affect Podman CLI
 					case "PodmanArgs": // Handled above
+					case "PodName": // Handled above
 					default:
 						podmanOpt, err := util.QuadletOptionToPodman("pod", options, k, v)
 						if err != nil {
@@ -1243,6 +1248,9 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 					default:
 						if k == "Pod" {
 							v = strings.TrimSuffix(v, ".pod")
+							if podName, ok := q.GeneratedNames["pod_name"]; ok {
+								v = podName
+							}
 						}
 
 						podmanOpt, err := util.QuadletOptionToPodman("container", options, k, v)
