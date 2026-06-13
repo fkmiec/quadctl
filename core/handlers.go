@@ -125,10 +125,16 @@ func HandleStart(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 		// Use generateStartupCommands
 		cmd, warns := generateStartupCommand(quadctl, q)
 
-		//fmt.Printf("Command for quadlet %s is %v\n", q.ID, cmd)
+		resType := q.Type
+		resName := q.ID
+		if q.Type == ".container" {
+			resName = q.GeneratedNames["container"]
+		} else if q.Type == ".pod" {
+			resName = q.GeneratedNames["pod_name"]
+		}
 
 		if len(cmd) > 0 {
-			c := NewCommand(fmt.Sprintf("Starting %s %s", q.Type, q.ID))
+			c := NewCommand(fmt.Sprintf("Starting %s %s", resType, resName))
 			c.Cmd = cmd
 			c.Warnings = warns
 			commands = append(commands, c)
@@ -172,6 +178,13 @@ func HandleRun(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 		if q.Type != ".container" && q.Type != ".kube" {
 			continue
 		}
+		resName := q.ID
+		if q.Type == ".container" {
+			resName = q.GeneratedNames["container"]
+		} else if q.Type == ".pod" {
+			resName = q.GeneratedNames["pod_name"]
+		}
+
 		// For 'run' command, we need to generate 'podman run' commands instead of 'podman start' for containers.
 		cmd, warns := generateRunCommand(quadctl, q)
 		warnings := []string{}
@@ -179,7 +192,7 @@ func HandleRun(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 			warnings = append(warnings, fmt.Sprintf("%s: %s\n", filepath.Base(q.Filepath), w))
 		}
 		if len(cmd) > 0 {
-			command := NewCommand(fmt.Sprintf("Running %s %s", q.Type, q.ID))
+			command := NewCommand(fmt.Sprintf("Running %s %s", q.Type, resName))
 			command.Cmd = cmd
 			command.Warnings = warnings
 
@@ -204,9 +217,16 @@ func HandleStop(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 	// Reverse order for safe stopping
 	for i := len(quadlets) - 1; i >= 0; i-- {
 		q := quadlets[i]
+		resType := q.Type
+		resName := q.ID
+		if q.Type == ".container" {
+			resName = q.GeneratedNames["container"]
+		} else if q.Type == ".pod" {
+			resName = q.GeneratedNames["pod_name"]
+		}
 		cmd := generateStopCommand(quadctl, q)
 		if len(cmd) > 0 {
-			c := NewCommand(fmt.Sprintf("Stopping %s %s", q.Type, q.ID))
+			c := NewCommand(fmt.Sprintf("Stopping %s %s", resType, resName))
 			c.Cmd = cmd
 			commands = append(commands, c)
 		}
@@ -225,6 +245,8 @@ func HandleRemove(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Command {
 		resName := q.ID
 		if q.Type == ".container" {
 			resName = q.GeneratedNames["container"]
+		} else if q.Type == ".pod" {
+			resName = q.GeneratedNames["pod_name"]
 		}
 
 		rmCmd := []string{"podman"}
@@ -1324,6 +1346,8 @@ func generateStartupCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, [
 	// Other startable types are pod and container
 	if q.Type == ".container" {
 		resName = q.GeneratedNames["container"]
+	} else if q.Type == ".pod" {
+		resName = q.GeneratedNames["pod_name"]
 	}
 
 	// 3. Determine if we should start it
@@ -1366,6 +1390,8 @@ func generateStopCommand(quadctl *util.Quadctl, q *util.Quadlet) []string {
 	resName := q.ID
 	if q.Type == ".container" {
 		resName = q.GeneratedNames["container"]
+	} else if q.Type == ".pod" {
+		resName = q.GeneratedNames["pod_name"]
 	}
 
 	switch q.Type {
