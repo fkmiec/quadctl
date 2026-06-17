@@ -34,6 +34,11 @@ jobs:
           GOOS=linux GOARCH=arm64 go build -o dist/arm64/quadctl
           cd dist/arm64
           tar cf quadctl_linux_arm64.tar quadctl
+          cd -
+          mkdir -p dist/armhf
+          GOOS=linux GOARCH=armhf go build -o dist/armhf/quadctl
+          cd dist/armhf
+          tar cf quadctl_linux_armhf.tar quadctl
 
       - name: Create and Upload Release
         uses: softprops/action-gh-release@v2
@@ -41,6 +46,7 @@ jobs:
           files: |
             dist/amd64/*.tar
             dist/arm64/*.tar
+            dist/armhf/*.tar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
