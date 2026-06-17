@@ -64,7 +64,9 @@ func DefaultRunFn(c *Command) {
 			c.Cmd[i] = strings.Trim(arg, `"`)
 		}
 
+		//fmt.Printf("Array of strings in my command:\n%q\n", c.Cmd)
 		cmd := exec.Command(c.Cmd[0], c.Cmd[1:]...)
+
 		if slices.Contains(c.Cmd, "run") && (!slices.Contains(c.Cmd, "-d") || !slices.Contains(c.Cmd, "--detach")) {
 			fmt.Printf("Running in foreground: %s\n", strings.Join(c.Cmd, " "))
 			cmd.Stdout = os.Stdout

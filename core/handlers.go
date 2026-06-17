@@ -1211,7 +1211,7 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 		//}
 
 		var image string
-		var execCmd string
+		var execCmd []string
 		if contSec, ok := q.Sections["Container"]; ok {
 			configuredPodmanArgs := getRawPodmanArgs(contSec)
 
@@ -1222,7 +1222,7 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 				configuredPodmanArgs = append(configuredPodmanArgs, util.ParseFields(quadctl.PodmanArgs)...)
 			}
 			if quadctl.RunCmd != "" {
-				execCmd = quadctl.RunCmd
+				execCmd = strings.Split(quadctl.RunCmd, " ")
 			}
 
 			cmd = append(cmd, configuredPodmanArgs...)
@@ -1241,8 +1241,8 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 				if k == "Exec" {
 					// Exec is a special case since it's not a Podman CLI option. Append command and args to the end of the create command.
 					// Ignore quadlet file Exec option if --exec flag was passed on the CLI
-					if execCmd == "" {
-						execCmd = strings.Join(vals, " ")
+					if len(execCmd) < 1 {
+						execCmd = append(execCmd, strings.Split(vals[0], " ")...)
 					}
 					continue
 				}
@@ -1291,9 +1291,9 @@ func generateCreateCommand(quadctl *util.Quadctl, q *util.Quadlet) ([]string, []
 			image = "<MISSING_IMAGE>"
 		}
 		cmd = append(cmd, image)
-		if execCmd != "" {
+		if len(execCmd) > 0 {
 			// If a command to execute is specified for the quadlet, the equivalent podman create command will have it appended at the end.
-			cmd = append(cmd, execCmd)
+			cmd = append(cmd, execCmd...)
 		}
 	}
 	return cmd, warnings
