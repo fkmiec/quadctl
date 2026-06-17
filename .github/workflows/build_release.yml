@@ -36,7 +36,7 @@ jobs:
           tar cf quadctl_linux_arm64.tar quadctl
           cd -
           mkdir -p dist/armhf
-          GOOS=linux GOARCH=arm GOARM=7 go build -o dist/armhf/quadctl
+          GOOS=linux GOARCH=arm GOARM=6 go build -o dist/armhf/quadctl
           cd dist/armhf
           tar cf quadctl_linux_armhf.tar quadctl
 
