@@ -333,6 +333,7 @@ func HandleSystemdCreate(quadctl *util.Quadctl, quadlets []*util.Quadlet) []Comm
 	searchDir := quadctl.SearchDir
 	if quadctl.DotQuadletsPath != "" {
 		searchDir = quadctl.DotQuadletsPath
+		//Check for and disallow use of symbolic links with .quadlets files
 		if quadctl.UseSymbolicLinks {
 			fmt.Fprintf(os.Stderr, "Error: Cannot use symbolic links with .quadlets files.\n  The individual quadlets in a .quadlets file must be extracted to a temp directory before install to systemd.\n  Cannot link to temp directory.\n")
 			os.Exit(1)

@@ -171,7 +171,7 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 	// If there were .quadlets files, then we copy other dot files to the temp directory where .quadlets were extracted
 	if quadctl.DotQuadletsPath != "" {
 		for _, f := range files {
-
+			//Copy subdirectories (ie. drop-in directories and files)
 			if f.IsDir() {
 				//fmt.Printf("Calling CopyDir for: %s\n", f.Name())
 				path := filepath.Join(searchDir, f.Name())
@@ -182,16 +182,18 @@ func discoverAndParseQuadlets(quadctl *Quadctl, searchDir string) (map[string]*Q
 				}
 				continue
 			}
-
+			//Skip the .quadlets files that were already extracted into the temp directory
 			path := filepath.Join(searchDir, f.Name())
 			ext := filepath.Ext(path)
-			if extensions[ext] {
-				//fmt.Printf("Calling CopyFile for: %s\n", f.Name())
-				newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
-				if err := CopyFile(path, newPath); err != nil {
-					fmt.Fprintf(os.Stderr, " Error copying %s to temporary .quadlets processing path %s: %v\n", path, newPath, err)
-					os.Exit(1)
-				}
+			if ".quadlets" == ext {
+				continue
+			}
+			//Copy any other files over (could be .container, .volume, etc. or .env file or a README ... whatever)
+			//fmt.Printf("Calling CopyFile for: %s\n", f.Name())
+			newPath := filepath.Join(quadctl.DotQuadletsPath, f.Name())
+			if err := CopyFile(path, newPath); err != nil {
+				fmt.Fprintf(os.Stderr, " Error copying %s to temporary .quadlets processing path %s: %v\n", path, newPath, err)
+				os.Exit(1)
 			}
 		}
 		searchDir = quadctl.DotQuadletsPath

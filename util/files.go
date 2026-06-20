@@ -197,6 +197,14 @@ func CopyFile(src, dst string) error {
 	return err
 }
 
+func DeleteFile(path string) error {
+	f, _ := os.Stat(path)
+	if f != nil {
+		return os.Remove(path)
+	}
+	return nil
+}
+
 func CopyDir(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -233,4 +241,19 @@ func ListSubdirectories(path string) ([]string, error) {
 		directories = append(directories, entry.Name())
 	}
 	return directories, nil
+}
+
+func ListFiles(path string) ([]string, error) {
+	var files []string
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		files = append(files, entry.Name())
+	}
+	return files, nil
 }
