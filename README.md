@@ -10,6 +10,8 @@ However, if you're coming from docker compose, quadlets look complex. Multiple f
 
 Quadctl aims to provide a simple and consistent CLI for running and managing quadlets with and without systemd. 
 
+See also [Blog](https://dev.to/itinkerthere4ican/quadlets-without-the-friction-352c)
+
 ## Demo
 
 ![Alt Text](./demo.gif)
